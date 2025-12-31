@@ -1,0 +1,229 @@
+# PROC-007 Phase 6.6: Weekly Infra References Reconciliation
+#
+# Detects and repairs drift between repos and the infrastructure references registry.
+# Runs weekly on Mondays at 6 AM UTC.
+#
+# This workflow:
+# 1. Installs the @teric/contracts CLI
+# 2. Assumes OIDC role for DynamoDB access
+# 3. Runs reconciliation to detect drift
+# 4. Creates GitHub issue if drift detected
+# 5. Optionally auto-repairs minor drift
+#
+# Related:
+# - PROC-007-early-integration-bug-detection.md
+# - teric-contracts/src/cli/commands/reconcile-registry.ts
+
+name: Reconcile Infra References
+
+on:
+  schedule:
+    # Monday 6 AM UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (show drift without fixing)'
+        required: false
+        default: 'false'
+        type: boolean
+      auto_repair:
+        description: 'Auto-repair minor drift'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+env:
+  REGISTRY_TABLE: teric-agentic-infra-references
+  AWS_REGION: us-east-1
+
+jobs:
+  reconcile:
+    name: Reconcile Registry
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+        with:
+          repository: teric-io/.github
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Install contracts CLI
+        run: npm install -g @teric-io/contracts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup GitHub CLI
+        run: |
+          # gh is pre-installed on GitHub-hosted runners
+          gh auth status
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/teric-agentic-infra-sync-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Run reconciliation
+        id: reconcile
+        run: |
+          echo "Running infra references reconciliation..."
+
+          # Set dry run flag
+          DRY_RUN_FLAG=""
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+
+          # Run reconciliation and capture output
+          contract-validator reconcile-registry \
+            --table "${{ env.REGISTRY_TABLE }}" \
+            --org "teric-io" \
+            --output-file "reconciliation-report.json" \
+            --output json \
+            $DRY_RUN_FLAG > reconciliation-output.json 2>&1 || true
+
+          # Extract drift count
+          DRIFT_COUNT=$(jq -r '.driftCount // 0' reconciliation-report.json)
+          STALE_REPOS=$(jq -r '.staleRepos | length // 0' reconciliation-report.json)
+          MISSING_REPOS=$(jq -r '.missingRepos | length // 0' reconciliation-report.json)
+          ORPHANED=$(jq -r '.orphanedReferences | length // 0' reconciliation-report.json)
+
+          echo "drift_count=$DRIFT_COUNT" >> $GITHUB_OUTPUT
+          echo "stale_repos=$STALE_REPOS" >> $GITHUB_OUTPUT
+          echo "missing_repos=$MISSING_REPOS" >> $GITHUB_OUTPUT
+          echo "orphaned=$ORPHANED" >> $GITHUB_OUTPUT
+
+          echo "### Reconciliation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Drift detected | $DRIFT_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Stale repos | $STALE_REPOS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Missing repos | $MISSING_REPOS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Orphaned references | $ORPHANED |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload reconciliation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: reconciliation-report
+          path: reconciliation-report.json
+          retention-days: 30
+
+      - name: Auto-repair minor drift
+        if: inputs.auto_repair == 'true' && steps.reconcile.outputs.stale_repos != '0'
+        run: |
+          echo "Auto-repairing stale repos by re-syncing..."
+
+          # Read stale repos from report
+          STALE_REPOS=$(jq -r '.staleRepos[]' reconciliation-report.json)
+
+          for repo in $STALE_REPOS; do
+            echo "Re-syncing $repo..."
+
+            # Clone repo to temp directory
+            REPO_NAME=$(echo "$repo" | cut -d'/' -f2)
+            git clone --depth 1 "https://github.com/$repo.git" "/tmp/repos/$REPO_NAME" || continue
+
+            # Check for config file
+            if [[ -f "/tmp/repos/$REPO_NAME/infra.contracts.yaml" ]]; then
+              # Invoke sync Lambda
+              aws lambda invoke \
+                --function-name teric-agentic-infra-references-sync \
+                --qualifier stable \
+                --cli-binary-format raw-in-base64-out \
+                --payload "{\"operation\":\"sync\",\"repository\":\"$repo\",\"config_path\":\"/tmp/repos/$REPO_NAME/infra.contracts.yaml\"}" \
+                /tmp/sync-result.json
+              echo "  Synced $repo"
+            fi
+          done
+
+      - name: Create drift issue
+        if: steps.reconcile.outputs.drift_count != '0' && inputs.dry_run != 'true'
+        run: |
+          # Check for existing open issue
+          EXISTING=$(gh issue list --repo teric-io/teric-planning --label "proc-007,drift-detected" --state open --json number --jq '.[0].number // empty')
+
+          if [[ -n "$EXISTING" ]]; then
+            echo "Updating existing issue #$EXISTING"
+
+            # Add comment to existing issue
+            gh issue comment "$EXISTING" --repo teric-io/teric-planning --body "## Weekly Reconciliation Update ($(date +%Y-%m-%d))
+
+| Metric | Count |
+|--------|-------|
+| Drift detected | ${{ steps.reconcile.outputs.drift_count }} |
+| Stale repos | ${{ steps.reconcile.outputs.stale_repos }} |
+| Missing repos | ${{ steps.reconcile.outputs.missing_repos }} |
+| Orphaned references | ${{ steps.reconcile.outputs.orphaned }} |
+
+<details>
+<summary>Full Report</summary>
+
+\`\`\`json
+$(cat reconciliation-report.json)
+\`\`\`
+</details>
+
+**Workflow run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          else
+            echo "Creating new drift issue"
+
+            gh issue create --repo teric-io/teric-planning \
+              --title "[PROC-007] Infrastructure References Registry Drift Detected" \
+              --label "proc-007,drift-detected,needs-human" \
+              --body "## Drift Detected in Infrastructure References Registry
+
+The weekly reconciliation job detected drift between repositories and the registry.
+
+### Summary
+
+| Metric | Count |
+|--------|-------|
+| Drift detected | ${{ steps.reconcile.outputs.drift_count }} |
+| Stale repos | ${{ steps.reconcile.outputs.stale_repos }} |
+| Missing repos | ${{ steps.reconcile.outputs.missing_repos }} |
+| Orphaned references | ${{ steps.reconcile.outputs.orphaned }} |
+
+### Actions Required
+
+1. **Stale repos**: Re-run their CI pipelines to sync updated contracts
+2. **Missing repos**: Run \`contract-validator bootstrap-registry --repos <repo>\`
+3. **Orphaned references**: Review and clean up or add repos to known list
+
+### Related
+
+- [PROC-007 Implementation Plan](https://github.com/teric-io/teric-planning/blob/main/PROC-007/IMPLEMENTATION-PLAN.md)
+- [Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+<details>
+<summary>Full Report</summary>
+
+\`\`\`json
+$(cat reconciliation-report.json)
+\`\`\`
+</details>"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report success
+        if: steps.reconcile.outputs.drift_count == '0'
+        run: |
+          echo "### ✅ No Drift Detected" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All repositories are in sync with the infrastructure references registry." >> $GITHUB_STEP_SUMMARY
