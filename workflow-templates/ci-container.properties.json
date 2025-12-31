@@ -1,0 +1,13 @@
+{
+  "name": "Container CI/CD",
+  "description": "Standard CI/CD pipeline for containerized applications with Docker build, ECR push, and ECS deployment",
+  "iconName": "docker",
+  "categories": [
+    "Deployment",
+    "Containers"
+  ],
+  "filePatterns": [
+    "Dockerfile",
+    "package.json"
+  ]
+}

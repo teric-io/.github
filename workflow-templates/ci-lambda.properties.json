@@ -1,0 +1,13 @@
+{
+  "name": "Lambda CI/CD",
+  "description": "Standard CI/CD pipeline for Lambda function repositories with build, test, contract validation, and deployment",
+  "iconName": "aws",
+  "categories": [
+    "Deployment",
+    "Node"
+  ],
+  "filePatterns": [
+    "package.json",
+    "src/**/*.ts"
+  ]
+}

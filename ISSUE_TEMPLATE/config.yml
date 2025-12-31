@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Planning Documents
+    url: https://github.com/teric-io/teric-planning
+    about: View or create planning documents (ARCH-XXX, FEAT-XXX, etc.)
+  - name: Documentation
+    url: https://github.com/teric-io/teric-meta
+    about: Organization guidelines, standards, and documentation
+  - name: Runbooks
+    url: https://github.com/teric-io/teric-ops/tree/main/runbooks
+    about: Operational runbooks for incident response

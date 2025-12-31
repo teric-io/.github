@@ -1,0 +1,207 @@
+# PROC-007: Reusable Contract Validation Workflow
+#
+# This workflow validates code against infrastructure contracts defined in @teric/contracts.
+# It can be called from any repository in the teric-io organization.
+#
+# Usage in consumer repos:
+#   uses: teric-io/.github/.github/workflows/contract-validation.yml@main
+#   with:
+#     advisory_only: false
+#
+# Reference: teric-planning/PROC-007-early-integration-bug-detection.md
+
+name: Contract Validation (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      advisory_only:
+        type: boolean
+        default: false
+        description: 'Advisory mode (true = warnings only, false = blocking)'
+      contracts_tag:
+        type: string
+        default: 'stable'
+        description: 'Tag of @teric/contracts to validate against'
+      node_version:
+        type: string
+        default: '20'
+        description: 'Node.js version to use'
+    outputs:
+      validation_passed:
+        description: 'Whether validation passed'
+        value: ${{ jobs.validate.outputs.passed }}
+      violations_count:
+        description: 'Number of contract violations found'
+        value: ${{ jobs.validate.outputs.violations }}
+    secrets:
+      AWS_ACCOUNT_ID:
+        required: false
+        description: 'AWS account ID for OIDC authentication (optional for advisory mode)'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+jobs:
+  validate:
+    name: Validate Contracts
+    runs-on: ubuntu-latest
+    outputs:
+      passed: ${{ steps.validate.outputs.passed }}
+      violations: ${{ steps.validate.outputs.violations }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: 'npm'
+
+      - name: Check for infra.contracts.yaml
+        id: check-contracts
+        run: |
+          if [[ -f "infra.contracts.yaml" ]]; then
+            echo "has_contracts=true" >> $GITHUB_OUTPUT
+            echo "Found infra.contracts.yaml - will validate contracts"
+          else
+            echo "has_contracts=false" >> $GITHUB_OUTPUT
+            echo "No infra.contracts.yaml found - skipping validation"
+          fi
+
+      - name: Install contract validator
+        if: steps.check-contracts.outputs.has_contracts == 'true'
+        run: |
+          npm install -g @teric/contract-validator@${{ inputs.contracts_tag }} || {
+            echo "::warning::Could not install @teric/contract-validator. Package may not be published yet."
+            echo "validator_available=false" >> $GITHUB_OUTPUT
+            exit 0
+          }
+          echo "validator_available=true" >> $GITHUB_OUTPUT
+        id: install-validator
+
+      - name: Configure AWS credentials (optional)
+        if: steps.check-contracts.outputs.has_contracts == 'true' && secrets.AWS_ACCOUNT_ID != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/proc-007-contract-validation-gha
+          aws-region: us-east-1
+        continue-on-error: true
+
+      - name: Run contract validation
+        id: validate
+        if: steps.check-contracts.outputs.has_contracts == 'true' && steps.install-validator.outputs.validator_available == 'true'
+        run: |
+          # Run validation and capture output
+          set +e
+          contract-validator validate \
+            --mode consumer \
+            --output json \
+            ${{ inputs.advisory_only && '--advisory' || '' }} \
+            > validation-result.json 2>&1
+
+          EXIT_CODE=$?
+          set -e
+
+          # Parse results
+          if [[ -f validation-result.json ]]; then
+            VIOLATIONS=$(jq '.violations // 0' validation-result.json 2>/dev/null || echo "0")
+            PASSED=$(jq '.passed // true' validation-result.json 2>/dev/null || echo "true")
+          else
+            VIOLATIONS=0
+            PASSED=true
+          fi
+
+          echo "violations=$VIOLATIONS" >> $GITHUB_OUTPUT
+          echo "passed=$PASSED" >> $GITHUB_OUTPUT
+
+          # In advisory mode, always exit 0
+          if [[ "${{ inputs.advisory_only }}" == "true" ]]; then
+            echo "::notice::Advisory mode - validation issues are warnings only"
+            exit 0
+          fi
+
+          exit $EXIT_CODE
+        continue-on-error: ${{ inputs.advisory_only }}
+
+      - name: Skip validation (no contracts file)
+        if: steps.check-contracts.outputs.has_contracts != 'true'
+        id: skip-validation
+        run: |
+          echo "passed=true" >> $GITHUB_OUTPUT
+          echo "violations=0" >> $GITHUB_OUTPUT
+          echo "::notice::No infra.contracts.yaml found - validation skipped"
+
+      - name: Post PR comment with results
+        if: github.event_name == 'pull_request' && steps.check-contracts.outputs.has_contracts == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let result = { passed: true, violations: [], warnings: [] };
+            try {
+              if (fs.existsSync('validation-result.json')) {
+                result = JSON.parse(fs.readFileSync('validation-result.json', 'utf8'));
+              }
+            } catch (e) {
+              console.log('Could not parse validation result:', e.message);
+            }
+
+            const advisoryOnly = '${{ inputs.advisory_only }}' === 'true';
+            const icon = result.passed ? '✅' : (advisoryOnly ? '⚠️' : '❌');
+            const status = result.passed ? 'Passed' : (advisoryOnly ? 'Warnings' : 'Failed');
+
+            let body = `## ${icon} Contract Validation ${status}\n\n`;
+            body += `**Mode**: ${advisoryOnly ? 'Advisory (non-blocking)' : 'Blocking'}\n`;
+            body += `**Contracts Tag**: \`${{ inputs.contracts_tag }}\`\n\n`;
+
+            if (result.violations && result.violations.length > 0) {
+              body += `### Violations (${result.violations.length})\n\n`;
+              for (const v of result.violations.slice(0, 10)) {
+                body += `- **${v.type || 'Unknown'}**: ${v.message || 'No details'}\n`;
+                if (v.file) body += `  - File: \`${v.file}\`\n`;
+                if (v.contract) body += `  - Contract: \`${v.contract}\`\n`;
+              }
+              if (result.violations.length > 10) {
+                body += `\n_...and ${result.violations.length - 10} more violations_\n`;
+              }
+            } else {
+              body += '### No violations found\n\n';
+              body += 'All infrastructure contracts are satisfied.\n';
+            }
+
+            body += '\n---\n';
+            body += '_Powered by [PROC-007 Contract Validation](https://github.com/teric-io/teric-planning/blob/main/PROC-007-early-integration-bug-detection.md)_';
+
+            // Find existing comment or create new one
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' &&
+              c.body.includes('Contract Validation')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }

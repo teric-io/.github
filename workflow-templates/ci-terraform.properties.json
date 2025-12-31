@@ -1,0 +1,13 @@
+{
+  "name": "Terraform CI/CD",
+  "description": "Standard CI/CD pipeline for Terraform configurations with validation, plan preview on PRs, and auto-apply on merge",
+  "iconName": "terraform",
+  "categories": [
+    "Deployment",
+    "IaC"
+  ],
+  "filePatterns": [
+    "*.tf",
+    "*.tfvars"
+  ]
+}
