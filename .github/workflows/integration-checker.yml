@@ -1,5 +1,19 @@
 # PROC-007: Integration Checker Workflow
 #
+# ⚠️ DEPRECATED: This workflow is deprecated as of PROC-007 v1.6.
+#
+# Contract validation is now enforced by the code-review agent during PR review,
+# not by CI workflows. This workflow is preserved for historical reference and
+# may be removed in a future cleanup.
+#
+# New enforcement mechanism:
+# - Code-review agent scans for hardcoded infrastructure references
+# - Violations flagged as CRITICAL severity (blocks approval)
+# - Exceptions via CONTRACT_EXEMPTION inline comments
+#
+# See: teric-planning/PROC-007-early-integration-bug-detection.md (Section: Org-Wide Enforcement Strategy)
+#
+# ----- ORIGINAL DOCUMENTATION (for reference) -----
 # This workflow performs cross-repository integration validation.
 # It checks that changes in one repository don't break contracts
 # with dependent repositories.
