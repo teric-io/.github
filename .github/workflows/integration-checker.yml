@@ -68,7 +68,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # Note: cache removed - no package-lock.json in root and workflow is deprecated
 
       - name: Determine repository type
         id: repo-type
