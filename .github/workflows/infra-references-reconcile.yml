@@ -65,6 +65,16 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify CLI installation
+        run: |
+          which contract-validator || {
+            echo "ERROR: contract-validator command not found in PATH"
+            echo "Available global packages:"
+            npm list -g --depth=0
+            exit 1
+          }
+          contract-validator --version
+
       - name: Setup GitHub CLI
         run: |
           # gh is pre-installed on GitHub-hosted runners
@@ -90,12 +100,16 @@ jobs:
           fi
 
           # Run reconciliation and capture output
-          contract-validator reconcile-registry \
+          if ! contract-validator reconcile-registry \
             --table "${{ env.REGISTRY_TABLE }}" \
             --org "teric-io" \
             --output-file "reconciliation-report.json" \
             --output json \
-            $DRY_RUN_FLAG > reconciliation-output.json 2>&1 || true
+            $DRY_RUN_FLAG > reconciliation-output.json 2>&1; then
+            echo "ERROR: Reconciliation command failed"
+            cat reconciliation-output.json
+            exit 1
+          fi
 
           # Extract drift count
           DRIFT_COUNT=$(jq -r '.driftCount // 0' reconciliation-report.json)
@@ -125,7 +139,7 @@ jobs:
           retention-days: 30
 
       - name: Auto-repair minor drift
-        if: inputs.auto_repair == 'true' && steps.reconcile.outputs.stale_repos != '0'
+        if: inputs.auto_repair == true && steps.reconcile.outputs.stale_repos != '0'
         run: |
           echo "Auto-repairing stale repos by re-syncing..."
 
@@ -148,12 +162,18 @@ jobs:
                 --cli-binary-format raw-in-base64-out \
                 --payload "{\"operation\":\"sync\",\"repository\":\"$repo\",\"config_path\":\"/tmp/repos/$REPO_NAME/infra.contracts.yaml\"}" \
                 /tmp/sync-result.json
-              echo "  Synced $repo"
+
+              # Check for Lambda execution errors
+              if jq -e '.errorMessage' /tmp/sync-result.json > /dev/null 2>&1; then
+                echo "  ERROR syncing $repo: $(jq -r '.errorMessage' /tmp/sync-result.json)"
+              else
+                echo "  Synced $repo"
+              fi
             fi
           done
 
       - name: Create drift issue
-        if: steps.reconcile.outputs.drift_count != '0' && inputs.dry_run != 'true'
+        if: steps.reconcile.outputs.drift_count != '0' && inputs.dry_run != true
         run: |
           # Check for existing open issue
           EXISTING=$(gh issue list --repo teric-io/teric-planning --label "proc-007,drift-detected" --state open --json number --jq '.[0].number // empty')
