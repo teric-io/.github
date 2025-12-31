@@ -1,0 +1,29 @@
+{
+  "name": "@teric/github-scripts",
+  "version": "1.0.0",
+  "description": "GitHub Actions scripts for teric-io organization",
+  "private": true,
+  "type": "commonjs",
+  "main": "validate-contracts.js",
+  "scripts": {
+    "validate": "node validate-contracts.js",
+    "test": "jest",
+    "test:coverage": "jest --coverage"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/teric-io/.github.git",
+    "directory": ".github/scripts"
+  },
+  "author": "Teric Platform Team",
+  "license": "MIT"
+}
