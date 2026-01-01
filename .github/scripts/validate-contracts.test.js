@@ -47,12 +47,12 @@ contract_version: "1.0"
 repository: "teric-io/test-repo"
 updated_at: "2025-01-01"
 contracts:
-  source: "@teric/contracts"
+  source: "@teric-io/contracts"
   tag: stable
 dynamodb:
   tables:
     - name: work-items
-      contract: "@teric/contracts/dynamodb/work-items"
+      contract: "@teric-io/contracts/dynamodb/work-items"
 `;
       fs.writeFileSync(path.join(FIXTURES_DIR, 'infra.contracts.yaml'), contractsContent);
     });
@@ -67,7 +67,7 @@ dynamodb:
       fs.writeFileSync(
         path.join(srcDir, 'handler.ts'),
         `
-import { WorkItemsTable } from '@teric/contracts/dynamodb';
+import { WorkItemsTable } from '@teric-io/contracts/dynamodb';
 
 export async function handler() {
   const tableName = WorkItemsTable.name;

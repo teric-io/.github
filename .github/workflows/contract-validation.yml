@@ -14,7 +14,7 @@
 # See: teric-planning/PROC-007-early-integration-bug-detection.md (Section: Org-Wide Enforcement Strategy)
 #
 # ----- ORIGINAL DOCUMENTATION (for reference) -----
-# This workflow validates code against infrastructure contracts defined in @teric/contracts.
+# This workflow validates code against infrastructure contracts defined in @teric-io/contracts.
 # It can be called from any repository in the teric-io organization.
 #
 # Usage in consumer repos:
@@ -36,7 +36,7 @@ on:
       contracts_tag:
         type: string
         default: 'stable'
-        description: 'Tag of @teric/contracts to validate against'
+        description: 'Tag of @teric-io/contracts to validate against'
       node_version:
         type: string
         default: '20'
@@ -100,12 +100,12 @@ jobs:
           cd .github-org/.github/scripts
           npm install --production
 
-      - name: Install @teric/contracts (optional)
+      - name: Install @teric-io/contracts (optional)
         if: steps.check-contracts.outputs.has_contracts == 'true'
         run: |
-          # Try to install @teric/contracts for enhanced validation
-          npm install @teric/contracts@${{ inputs.contracts_tag }} 2>/dev/null || {
-            echo "::notice::@teric/contracts package not available - using basic validation"
+          # Try to install @teric-io/contracts for enhanced validation
+          npm install @teric-io/contracts@${{ inputs.contracts_tag }} 2>/dev/null || {
+            echo "::notice::@teric-io/contracts package not available - using basic validation"
           }
         continue-on-error: true
 

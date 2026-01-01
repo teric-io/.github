@@ -38,13 +38,13 @@ repository: "teric-io/your-repo"
 updated_at: "2025-01-01"
 
 contracts:
-  source: "@teric/contracts"
+  source: "@teric-io/contracts"
   tag: stable
 
 dynamodb:
   tables:
     - name: work-items
-      contract: "@teric/contracts/dynamodb/work-items"
+      contract: "@teric-io/contracts/dynamodb/work-items"
       operations: [GetItem, PutItem, Query]
 ```
 
@@ -72,7 +72,7 @@ jobs:
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
 | `advisory_only` | boolean | `false` | Run in advisory mode (warnings only, no failure) |
-| `contracts_tag` | string | `stable` | Version tag of @teric/contracts to use |
+| `contracts_tag` | string | `stable` | Version tag of @teric-io/contracts to use |
 | `node_version` | string | `20` | Node.js version for validation |
 
 ### Workflow Outputs
@@ -99,7 +99,7 @@ const TABLE_NAME = 'teric-agentic-work-items';
 
 **Use:**
 ```typescript
-import { WorkItemsTable } from '@teric/contracts/dynamodb';
+import { WorkItemsTable } from '@teric-io/contracts/dynamodb';
 const TABLE_NAME = WorkItemsTable.name;
 ```
 
@@ -192,7 +192,7 @@ For emergency situations, add these labels to PRs:
 
 - [PROC-007: Early Integration Bug Detection](https://github.com/teric-io/teric-planning/blob/main/PROC-007-early-integration-bug-detection.md)
 - [INTEGRATION_CONTRACTS_GUIDELINES.md](https://github.com/teric-io/teric-meta/blob/main/guidelines/INTEGRATION_CONTRACTS_GUIDELINES.md)
-- [@teric/contracts Package](https://github.com/teric-io/teric-contracts)
+- [@teric-io/contracts Package](https://github.com/teric-io/teric-contracts)
 
 ---
 
