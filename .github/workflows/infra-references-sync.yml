@@ -99,20 +99,21 @@ jobs:
         run: |
           echo "Syncing infra.contracts.yaml to registry..."
 
-          # Build command
-          CMD="contract-validator sync-references"
-          CMD="$CMD --table \"${{ env.REGISTRY_TABLE }}\""
-          CMD="$CMD --config \"${{ inputs.config_path }}\""
-          CMD="$CMD --output json"
-
-          # Add dry-run flag if requested
+          # Set dry-run flag if requested
+          DRY_RUN_FLAG=""
           if [[ "${{ inputs.dry_run }}" == "true" ]]; then
-            CMD="$CMD --dry-run"
+            DRY_RUN_FLAG="--dry-run"
           fi
 
-          # Run sync and capture output
-          echo "Running: $CMD"
-          if ! eval $CMD > sync-result.json 2>&1; then
+          # Log command for debugging
+          echo "Running: contract-validator sync-references --table ${{ env.REGISTRY_TABLE }} --config ${{ inputs.config_path }} --output json $DRY_RUN_FLAG"
+
+          # Run sync directly without eval (security best practice)
+          if ! contract-validator sync-references \
+            --table "${{ env.REGISTRY_TABLE }}" \
+            --config "${{ inputs.config_path }}" \
+            --output json \
+            $DRY_RUN_FLAG > sync-result.json 2>&1; then
             echo "ERROR: Sync command failed"
             cat sync-result.json
             exit 1
