@@ -32,13 +32,13 @@ We use infrastructure contracts to catch integration bugs early:
 ```yaml
 # infra.contracts.yaml - Declare infrastructure dependencies
 contracts:
-  source: "@teric/contracts"
+  source: "@teric-io/contracts"
   tag: stable
 
 dynamodb:
   tables:
     - name: work-items
-      contract: "@teric/contracts/dynamodb/work-items"
+      contract: "@teric-io/contracts/dynamodb/work-items"
 ```
 
 [Learn more about contract validation →](https://github.com/teric-io/teric-planning/blob/main/PROC-007-early-integration-bug-detection.md)

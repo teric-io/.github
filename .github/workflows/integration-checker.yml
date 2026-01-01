@@ -39,7 +39,7 @@ on:
       contracts_tag:
         type: string
         default: 'stable'
-        description: 'Tag of @teric/contracts to validate against'
+        description: 'Tag of @teric-io/contracts to validate against'
     outputs:
       compatible:
         description: 'Whether changes are compatible with dependents'

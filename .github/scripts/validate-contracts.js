@@ -22,7 +22,7 @@ const advisoryMode = args.includes('--advisory');
 const configFile = configIndex !== -1 ? args[configIndex + 1] : 'infra.contracts.yaml';
 
 /**
- * Known DynamoDB table name patterns from @teric/contracts
+ * Known DynamoDB table name patterns from @teric-io/contracts
  * These are the canonical table names that should be used via contracts
  */
 const KNOWN_TABLE_PATTERNS = [
@@ -104,8 +104,8 @@ function scanFile(filePath, contracts) {
             severity: 'error',
             file: filePath,
             line: lineNum,
-            message: `Hardcoded table name '${tableName}' should use @teric/contracts`,
-            contract: `@teric/contracts/dynamodb/${tableName.replace('teric-agentic-', '')}`,
+            message: `Hardcoded table name '${tableName}' should use @teric-io/contracts`,
+            contract: `@teric-io/contracts/dynamodb/${tableName.replace('teric-agentic-', '')}`,
             snippet: line.trim().substring(0, 100),
           });
         }
@@ -124,8 +124,8 @@ function scanFile(filePath, contracts) {
             severity: 'error',
             file: filePath,
             line: lineNum,
-            message: `Hardcoded Lambda name '${funcName}' should use @teric/contracts`,
-            contract: `@teric/contracts/lambda/${funcName}`,
+            message: `Hardcoded Lambda name '${funcName}' should use @teric-io/contracts`,
+            contract: `@teric-io/contracts/lambda/${funcName}`,
             snippet: line.trim().substring(0, 100),
           });
         }
@@ -144,8 +144,8 @@ function scanFile(filePath, contracts) {
             severity: 'warning',
             file: filePath,
             line: lineNum,
-            message: `EventBridge source '${source}' should use @teric/contracts`,
-            contract: `@teric/contracts/events/${source.replace('teric.', '')}`,
+            message: `EventBridge source '${source}' should use @teric-io/contracts`,
+            contract: `@teric-io/contracts/events/${source.replace('teric.', '')}`,
             snippet: line.trim().substring(0, 100),
           });
         }
@@ -194,19 +194,19 @@ function getSourceFiles(dir, extensions = ['.ts', '.js', '.tsx', '.jsx']) {
 }
 
 /**
- * Validate declared contracts exist in @teric/contracts package
+ * Validate declared contracts exist in @teric-io/contracts package
  */
 function validateDeclaredContracts(contracts) {
   const warnings = [];
 
-  // Check if @teric/contracts is available
+  // Check if @teric-io/contracts is available
   try {
-    require.resolve('@teric/contracts');
+    require.resolve('@teric-io/contracts');
   } catch {
     warnings.push({
       type: 'package_not_installed',
       severity: 'warning',
-      message: '@teric/contracts package not installed - cannot validate contract declarations',
+      message: '@teric-io/contracts package not installed - cannot validate contract declarations',
     });
     return warnings;
   }
@@ -216,12 +216,12 @@ function validateDeclaredContracts(contracts) {
     for (const table of contracts.dynamodb.tables) {
       // Contract paths should be validated against actual exports
       // For now, just check the path format
-      if (table.contract && !table.contract.startsWith('@teric/contracts/')) {
+      if (table.contract && !table.contract.startsWith('@teric-io/contracts/')) {
         warnings.push({
           type: 'invalid_contract_path',
           severity: 'warning',
           message: `Invalid contract path: ${table.contract}`,
-          expected: '@teric/contracts/dynamodb/<table-name>',
+          expected: '@teric-io/contracts/dynamodb/<table-name>',
         });
       }
     }

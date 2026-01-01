@@ -4,7 +4,7 @@
 # Runs weekly on Mondays at 6 AM UTC.
 #
 # This workflow:
-# 1. Installs the @teric/contracts CLI
+# 1. Installs the @teric-io/contracts CLI
 # 2. Assumes OIDC role for DynamoDB access
 # 3. Runs reconciliation to detect drift
 # 4. Creates GitHub issue if drift detected
