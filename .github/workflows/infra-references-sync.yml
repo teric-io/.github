@@ -1,0 +1,177 @@
+# PROC-007 Phase 6.2: Infrastructure References Sync
+#
+# Reusable workflow that syncs infra.contracts.yaml to the registry.
+# Call this workflow from any repo's push-to-main workflow.
+#
+# This workflow:
+# 1. Installs the @teric-io/contracts CLI
+# 2. Assumes OIDC role for DynamoDB access
+# 3. Runs sync-references to update the registry
+#
+# Related:
+# - PROC-007-early-integration-bug-detection.md
+# - teric-contracts/src/cli/commands/sync-references.ts
+# - infra-references-reconcile.yml (weekly drift detection)
+
+name: Sync Infra References
+
+on:
+  workflow_call:
+    inputs:
+      config_path:
+        description: 'Path to infra.contracts.yaml'
+        required: false
+        default: 'infra.contracts.yaml'
+        type: string
+      dry_run:
+        description: 'Dry run (show what would be synced without writing)'
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      AWS_ACCOUNT_ID:
+        description: 'AWS account ID for OIDC role assumption'
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  REGISTRY_TABLE: teric-agentic-infra-references
+  AWS_REGION: us-east-1
+
+jobs:
+  sync:
+    name: Sync References
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for infra.contracts.yaml
+        id: check-config
+        run: |
+          if [[ -f "${{ inputs.config_path }}" ]]; then
+            echo "has_config=true" >> $GITHUB_OUTPUT
+            echo "✓ Found ${{ inputs.config_path }}"
+          else
+            echo "has_config=false" >> $GITHUB_OUTPUT
+            echo "⚠ No ${{ inputs.config_path }} found - skipping sync"
+          fi
+
+      - name: Setup Node.js
+        if: steps.check-config.outputs.has_config == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+
+      - name: Install contracts CLI
+        if: steps.check-config.outputs.has_config == 'true'
+        run: npm install -g @teric-io/contracts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify CLI installation
+        if: steps.check-config.outputs.has_config == 'true'
+        run: |
+          which contract-validator || {
+            echo "ERROR: contract-validator command not found in PATH"
+            echo "Available global packages:"
+            npm list -g --depth=0
+            exit 1
+          }
+          contract-validator --version
+
+      - name: Configure AWS credentials (OIDC)
+        if: steps.check-config.outputs.has_config == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/teric-agentic-infra-sync-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync references to registry
+        if: steps.check-config.outputs.has_config == 'true'
+        id: sync
+        run: |
+          echo "Syncing infra.contracts.yaml to registry..."
+
+          # Set dry-run flag if requested
+          DRY_RUN_FLAG=""
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            DRY_RUN_FLAG="--dry-run"
+          fi
+
+          # Log command for debugging
+          echo "Running: contract-validator sync-references --table ${{ env.REGISTRY_TABLE }} --config ${{ inputs.config_path }} --output json $DRY_RUN_FLAG"
+
+          # Run sync directly without eval (security best practice)
+          if ! contract-validator sync-references \
+            --table "${{ env.REGISTRY_TABLE }}" \
+            --config "${{ inputs.config_path }}" \
+            --output json \
+            $DRY_RUN_FLAG > sync-result.json 2>&1; then
+            echo "ERROR: Sync command failed"
+            cat sync-result.json
+            exit 1
+          fi
+
+          # Extract results
+          SUCCESS=$(jq -r '.success' sync-result.json)
+          REFERENCES=$(jq -r '.referencesSynced // 0' sync-result.json)
+          REPO=$(jq -r '.repository' sync-result.json)
+          DURATION=$(jq -r '.durationMs // 0' sync-result.json)
+
+          echo "success=$SUCCESS" >> $GITHUB_OUTPUT
+          echo "references=$REFERENCES" >> $GITHUB_OUTPUT
+          echo "repository=$REPO" >> $GITHUB_OUTPUT
+          echo "duration=$DURATION" >> $GITHUB_OUTPUT
+
+          # Write summary
+          echo "### Sync References Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
+            echo "**Mode**: Dry Run (no changes written)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**Mode**: Production" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | $REPO |" >> $GITHUB_STEP_SUMMARY
+          echo "| References synced | $REFERENCES |" >> $GITHUB_STEP_SUMMARY
+          echo "| Duration | ${DURATION}ms |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+
+          # Show references by type
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**References by type:**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          jq -r '.referencesByType | to_entries[] | "- \(.key): \(.value)"' sync-result.json >> $GITHUB_STEP_SUMMARY || true
+
+          if [[ "$SUCCESS" != "true" ]]; then
+            echo "::error::Sync failed - check sync-result.json for details"
+            exit 1
+          fi
+
+      - name: Upload sync result
+        if: steps.check-config.outputs.has_config == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-result
+          path: sync-result.json
+          retention-days: 7
+
+      - name: Report skipped
+        if: steps.check-config.outputs.has_config == 'false'
+        run: |
+          echo "### Sync Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "No \`${{ inputs.config_path }}\` file found in repository." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "To enable infrastructure reference syncing:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Create an \`infra.contracts.yaml\` file" >> $GITHUB_STEP_SUMMARY
+          echo "2. Run \`contract-validator init\` to bootstrap" >> $GITHUB_STEP_SUMMARY
