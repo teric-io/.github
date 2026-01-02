@@ -33,6 +33,11 @@ on:
         required: false
         default: '449923455111'
         type: string
+      contracts_version:
+        description: 'Version tag for @teric-io/contracts package (e.g., bootstrap-v1, latest)'
+        required: false
+        default: 'bootstrap-v1'
+        type: string
 
 permissions:
   id-token: write
@@ -73,7 +78,9 @@ jobs:
 
       - name: Install contracts CLI
         if: steps.check-config.outputs.has_config == 'true'
-        run: npm install -g @teric-io/contracts
+        run: |
+          echo "Installing @teric-io/contracts@${{ inputs.contracts_version }}"
+          npm install -g @teric-io/contracts@${{ inputs.contracts_version }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
