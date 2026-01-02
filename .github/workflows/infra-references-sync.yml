@@ -48,7 +48,8 @@ env:
   # PROC-007 v1.5: CLI invokes Lambda intermediary, Lambda writes to DynamoDB
   LAMBDA_NAME: teric-agentic-infra-references-sync
   LAMBDA_ALIAS: stable
-  AWS_REGION: us-east-1
+  # Must match terraform-definitions/aws-agentic region
+  AWS_REGION: us-west-2
 
 jobs:
   sync:
