@@ -5,8 +5,8 @@
 #
 # This workflow:
 # 1. Installs the @teric-io/contracts CLI
-# 2. Assumes OIDC role for DynamoDB access
-# 3. Runs sync-references to update the registry
+# 2. Assumes OIDC role for Lambda invocation (PROC-007 v1.5 architecture)
+# 3. Runs sync-references which invokes Lambda to update the registry
 #
 # Related:
 # - PROC-007-early-integration-bug-detection.md
@@ -45,8 +45,11 @@ permissions:
   packages: read
 
 env:
-  REGISTRY_TABLE: teric-agentic-infra-references
-  AWS_REGION: us-east-1
+  # PROC-007 v1.5: CLI invokes Lambda intermediary, Lambda writes to DynamoDB
+  LAMBDA_NAME: teric-agentic-infra-references-sync
+  LAMBDA_ALIAS: stable
+  # Must match terraform-definitions/aws-agentic region
+  AWS_REGION: us-west-2
 
 jobs:
   sync:
@@ -114,12 +117,14 @@ jobs:
             DRY_RUN_FLAG="--dry-run"
           fi
 
-          # Log command for debugging
-          echo "Running: contract-validator sync-references --table ${{ env.REGISTRY_TABLE }} --config ${{ inputs.config_path }} --output json $DRY_RUN_FLAG"
+          # Log command for debugging (PROC-007 v1.5 Lambda intermediary pattern)
+          echo "Running: contract-validator sync-references --lambda ${{ env.LAMBDA_NAME }} --alias ${{ env.LAMBDA_ALIAS }} --config ${{ inputs.config_path }} --output json $DRY_RUN_FLAG"
 
           # Run sync directly without eval (security best practice)
+          # PROC-007 v1.5: CLI invokes Lambda intermediary, Lambda writes to DynamoDB
           if ! contract-validator sync-references \
-            --table "${{ env.REGISTRY_TABLE }}" \
+            --lambda "${{ env.LAMBDA_NAME }}" \
+            --alias "${{ env.LAMBDA_ALIAS }}" \
             --config "${{ inputs.config_path }}" \
             --output json \
             $DRY_RUN_FLAG > sync-result.json 2>&1; then
