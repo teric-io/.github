@@ -36,6 +36,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  packages: read
 
 env:
   REGISTRY_TABLE: teric-agentic-infra-references
