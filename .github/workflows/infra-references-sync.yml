@@ -28,10 +28,11 @@ on:
         required: false
         default: false
         type: boolean
-    secrets:
-      AWS_ACCOUNT_ID:
-        description: 'AWS account ID for OIDC role assumption'
-        required: true
+      aws_account_id:
+        description: 'AWS account ID for OIDC role assumption (not sensitive - appears in public ARNs)'
+        required: false
+        default: '449923455111'
+        type: string
 
 permissions:
   id-token: write
@@ -91,7 +92,7 @@ jobs:
         if: steps.check-config.outputs.has_config == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/teric-agentic-infra-sync-role
+          role-to-assume: arn:aws:iam::${{ inputs.aws_account_id }}:role/teric-agentic-infra-sync-role
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Sync references to registry
