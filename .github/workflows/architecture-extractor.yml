@@ -35,6 +35,7 @@ permissions:
   contents: read
 
 env:
+  # Source of truth: terraform-definitions/aws-agentic/config.json
   AWS_REGION: us-west-2
 
 jobs:
@@ -60,10 +61,14 @@ jobs:
             --function-name teric-agentic-claude-token-broker \
             --payload '{}' \
             --cli-binary-format raw-in-base64-out \
-            /dev/stdout 2>/dev/null)
+            /dev/stdout 2>&1) || {
+            echo "::error::Lambda invocation failed: teric-agentic-claude-token-broker"
+            echo "::error::Response: $RESPONSE"
+            exit 1
+          }
           TOKEN=$(echo "$RESPONSE" | jq -r '.token')
           if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
-            echo "::error::Failed to retrieve Claude token"
+            echo "::error::Failed to retrieve Claude token from response"
             exit 1
           fi
           echo "::add-mask::$TOKEN"
@@ -76,10 +81,14 @@ jobs:
             --function-name teric-agentic-github-token-broker-architecture-extractor \
             --payload '{}' \
             --cli-binary-format raw-in-base64-out \
-            /dev/stdout 2>/dev/null)
+            /dev/stdout 2>&1) || {
+            echo "::error::Lambda invocation failed: teric-agentic-github-token-broker-architecture-extractor"
+            echo "::error::Response: $RESPONSE"
+            exit 1
+          }
           TOKEN=$(echo "$RESPONSE" | jq -r '.token')
           if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
-            echo "::error::Failed to retrieve GitHub installation token"
+            echo "::error::Failed to retrieve GitHub installation token from response"
             exit 1
           fi
           echo "::add-mask::$TOKEN"
@@ -105,6 +114,7 @@ jobs:
         with:
           repository: teric-io/.github
           path: _dotgithub
+          # Only fetch the extractor script to minimize checkout size
           sparse-checkout: scripts/architecture-extractor.mjs
 
       - name: Run architecture extraction
@@ -126,6 +136,10 @@ jobs:
       - name: Show dry-run output
         if: ${{ inputs.dry_run }}
         run: |
+          if [[ ! -s component-output.yaml ]]; then
+            echo "::error::Dry-run produced empty output"
+            exit 1
+          fi
           echo "### Extracted Component (dry run)" >> "$GITHUB_STEP_SUMMARY"
           echo '```yaml' >> "$GITHUB_STEP_SUMMARY"
           cat component-output.yaml >> "$GITHUB_STEP_SUMMARY"
