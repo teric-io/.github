@@ -1,0 +1,181 @@
+# PROC-008 Phase 4: Architecture Extractor
+#
+# Reusable workflow that uses Claude Haiku to analyze a repository and
+# generate/update its component.yaml in teric-meta/architecture/components/.
+#
+# Call this workflow from any repo's push-to-main workflow or via workflow_dispatch.
+#
+# Prerequisites (infrastructure):
+# - IAM role: github-actions-architecture-extractor (OIDC trust for GitHub Actions)
+# - Lambda: teric-agentic-claude-token-broker (existing, returns Claude OAuth token)
+# - Lambda: teric-agentic-github-token-broker-architecture-extractor (returns GitHub installation token)
+#
+# Related:
+# - teric-meta/architecture/schema/component-schema.yaml
+# - teric-planning/PROC-008/phase4-architecture-extractor-briefing.md
+
+name: Architecture Extractor
+
+on:
+  workflow_call:
+    inputs:
+      dry_run:
+        description: 'Preview extraction without creating PR'
+        required: false
+        type: boolean
+        default: false
+      aws_account_id:
+        description: 'AWS account ID for OIDC role assumption'
+        required: false
+        default: '449923455111'
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  # Source of truth: terraform-definitions/aws-agentic/config.json
+  AWS_REGION: us-west-2
+
+jobs:
+  extract:
+    name: Extract Architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout source repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ inputs.aws_account_id }}:role/teric-agentic-architecture-extractor-role
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Fetch Claude OAuth token
+        id: claude-token
+        run: |
+          RESPONSE=$(aws lambda invoke \
+            --function-name teric-agentic-claude-token-broker \
+            --payload '{}' \
+            --cli-binary-format raw-in-base64-out \
+            /dev/stdout 2>&1) || {
+            echo "::error::Lambda invocation failed: teric-agentic-claude-token-broker"
+            echo "::error::Response: $RESPONSE"
+            exit 1
+          }
+          TOKEN=$(echo "$RESPONSE" | jq -r '.token')
+          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
+            echo "::error::Failed to retrieve Claude token from response"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch GitHub installation token
+        id: github-token
+        run: |
+          RESPONSE=$(aws lambda invoke \
+            --function-name teric-agentic-github-token-broker-architecture-extractor \
+            --payload '{}' \
+            --cli-binary-format raw-in-base64-out \
+            /dev/stdout 2>&1) || {
+            echo "::error::Lambda invocation failed: teric-agentic-github-token-broker-architecture-extractor"
+            echo "::error::Response: $RESPONSE"
+            exit 1
+          }
+          TOKEN=$(echo "$RESPONSE" | jq -r '.token')
+          if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
+            echo "::error::Failed to retrieve GitHub installation token from response"
+            exit 1
+          fi
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout teric-meta
+        uses: actions/checkout@v4
+        with:
+          repository: teric-io/teric-meta
+          path: _teric-meta
+          token: ${{ steps.github-token.outputs.token }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install @anthropic-ai/sdk js-yaml
+
+      - name: Checkout extractor script
+        uses: actions/checkout@v4
+        with:
+          repository: teric-io/.github
+          path: _dotgithub
+          # Only fetch the extractor script to minimize checkout size
+          sparse-checkout: scripts/architecture-extractor.mjs
+
+      - name: Run architecture extraction
+        id: extract
+        env:
+          ANTHROPIC_API_KEY: ${{ steps.claude-token.outputs.token }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          SCHEMA_PATH: _teric-meta/architecture/schema/component-schema.yaml
+          EXISTING_COMPONENT_PATH: _teric-meta/architecture/components/${{ github.event.repository.name }}.yaml
+          SOURCE_REPO_PATH: .
+        run: node _dotgithub/scripts/architecture-extractor.mjs
+
+      - name: Copy output to teric-meta
+        if: ${{ !inputs.dry_run }}
+        run: |
+          REPO_NAME="${{ github.event.repository.name }}"
+          cp "component-output.yaml" "_teric-meta/architecture/components/${REPO_NAME}.yaml"
+
+      - name: Show dry-run output
+        if: ${{ inputs.dry_run }}
+        run: |
+          if [[ ! -s component-output.yaml ]]; then
+            echo "::error::Dry-run produced empty output"
+            exit 1
+          fi
+          echo "### Extracted Component (dry run)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```yaml' >> "$GITHUB_STEP_SUMMARY"
+          cat component-output.yaml >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create PR to teric-meta
+        if: ${{ !inputs.dry_run }}
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ steps.github-token.outputs.token }}
+          path: _teric-meta
+          branch: auto/update-${{ github.event.repository.name }}-component
+          base: main
+          delete-branch: true
+          title: "[ARCH-AUTO] Update ${{ github.event.repository.name }} architecture component"
+          body: |
+            ## Automated Architecture Component Update
+
+            **Source**: `${{ github.repository }}` @ `${{ github.sha }}`
+            **Trigger**: Push to main
+            **Extractor**: Claude Haiku via architecture-extractor workflow
+
+            ### What Changed
+            - Analyzed repository structure, handlers, and dependencies
+            - Updated infrastructure references and service dependencies
+            - Refreshed entrypoints and configuration
+
+            ### Review Checklist
+            - [ ] Responsibilities accurately describe component
+            - [ ] Infrastructure dependencies are correct
+            - [ ] Service dependencies are complete
+            - [ ] No sensitive information exposed
+
+            ---
+            *Requires human approval before merge*
+          labels: |
+            auto-generated
+            architecture
+            needs-review
