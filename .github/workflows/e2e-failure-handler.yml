@@ -1,0 +1,94 @@
+# FEAT-038: E2E Failure Handler
+#
+# Detects E2E test failures on main branch and triggers CI investigation.
+# This workflow monitors the completion of E2E test workflows and dispatches
+# a CI investigator agent when failures occur.
+#
+# Trigger: workflow_run completion of E2E test workflows on main branch.
+# Action: Calls ci-investigation-dispatch.yml reusable workflow.
+#
+# Related:
+# - teric-planning/FEAT-038-automated-ci-failure-investigation.md
+# - ci-investigation-dispatch.yml (reusable dispatch workflow)
+
+name: E2E Failure Handler
+
+on:
+  workflow_run:
+    workflows: ["E2E Tests", "E2E Test Runner"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check-failure:
+    name: Check for E2E Failure
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'failure'
+    outputs:
+      should_investigate: ${{ steps.check.outputs.should_investigate }}
+      failed_tests: ${{ steps.extract.outputs.failed_tests }}
+      test_output: ${{ steps.extract.outputs.test_output }}
+    steps:
+      - name: Check if investigation is warranted
+        id: check
+        run: |
+          echo "E2E workflow failed: ${{ github.event.workflow_run.name }}"
+          echo "Run ID: ${{ github.event.workflow_run.id }}"
+          echo "Head SHA: ${{ github.event.workflow_run.head_sha }}"
+          echo "should_investigate=true" >> "$GITHUB_OUTPUT"
+
+      - name: Download test artifacts
+        id: download
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: /tmp/test-artifacts
+        continue-on-error: true
+
+      - name: Extract failure details
+        id: extract
+        run: |
+          # Try to extract test output from artifacts
+          if [ -d "/tmp/test-artifacts" ]; then
+            FOUND_FILES=$(find /tmp/test-artifacts -type f | wc -l)
+            echo "::notice::Found $FOUND_FILES artifact files"
+
+            # Look for common test output files across frameworks
+            TEST_OUTPUT=$(find /tmp/test-artifacts \
+              \( -name "*.log" -o -name "*.txt" -o -name "test-results*" -o -name "junit*.xml" -o -name "*.tap" \) \
+              -type f -exec cat {} \; 2>/dev/null | head -500 || echo "No test output artifacts found")
+            FAILED_TESTS=$(find /tmp/test-artifacts -name "failed-tests*" -type f | \
+              head -1 | xargs cat 2>/dev/null || echo '["unknown"]')
+          else
+            TEST_OUTPUT="Test artifacts not available. Check workflow run ${{ github.event.workflow_run.id }} for details."
+            FAILED_TESTS='["unknown"]'
+          fi
+
+          # Write outputs (use files to handle multiline)
+          echo "test_output<<TEST_OUTPUT_EOF" >> "$GITHUB_OUTPUT"
+          echo "$TEST_OUTPUT" >> "$GITHUB_OUTPUT"
+          echo "TEST_OUTPUT_EOF" >> "$GITHUB_OUTPUT"
+
+          echo "failed_tests=$FAILED_TESTS" >> "$GITHUB_OUTPUT"
+
+  dispatch:
+    name: Dispatch Investigation
+    needs: check-failure
+    if: needs.check-failure.outputs.should_investigate == 'true'
+    # Use SHA-pinned reference to avoid race conditions with workflow updates
+    uses: teric-io/.github/.github/workflows/ci-investigation-dispatch.yml@${{ github.sha }}
+    with:
+      source: e2e-failure
+      mode: post-merge
+      repository: ${{ github.repository }}
+      failed_tests: ${{ needs.check-failure.outputs.failed_tests || '["unknown"]' }}
+      test_output: ${{ needs.check-failure.outputs.test_output || 'No test output available' }}
+      run_id: ${{ github.event.workflow_run.id }}
+      commit_sha: ${{ github.event.workflow_run.head_sha }}
+    secrets:
+      ORCHESTRATOR_DISPATCH_TOKEN: ${{ secrets.ORCHESTRATOR_DISPATCH_TOKEN }}
