@@ -55,10 +55,14 @@ jobs:
         run: |
           # Try to extract test output from artifacts
           if [ -d "/tmp/test-artifacts" ]; then
-            # Look for common test output files
-            TEST_OUTPUT=$(find /tmp/test-artifacts -name "*.log" -o -name "*.txt" -o -name "test-results*" | \
-              head -5 | xargs cat 2>/dev/null | head -500 || echo "No test output artifacts found")
-            FAILED_TESTS=$(find /tmp/test-artifacts -name "failed-tests*" | \
+            FOUND_FILES=$(find /tmp/test-artifacts -type f | wc -l)
+            echo "::notice::Found $FOUND_FILES artifact files"
+
+            # Look for common test output files across frameworks
+            TEST_OUTPUT=$(find /tmp/test-artifacts \
+              \( -name "*.log" -o -name "*.txt" -o -name "test-results*" -o -name "junit*.xml" -o -name "*.tap" \) \
+              -type f -exec cat {} \; 2>/dev/null | head -500 || echo "No test output artifacts found")
+            FAILED_TESTS=$(find /tmp/test-artifacts -name "failed-tests*" -type f | \
               head -1 | xargs cat 2>/dev/null || echo '["unknown"]')
           else
             TEST_OUTPUT="Test artifacts not available. Check workflow run ${{ github.event.workflow_run.id }} for details."
@@ -76,7 +80,8 @@ jobs:
     name: Dispatch Investigation
     needs: check-failure
     if: needs.check-failure.outputs.should_investigate == 'true'
-    uses: teric-io/.github/.github/workflows/ci-investigation-dispatch.yml@main
+    # Use SHA-pinned reference to avoid race conditions with workflow updates
+    uses: teric-io/.github/.github/workflows/ci-investigation-dispatch.yml@${{ github.sha }}
     with:
       source: e2e-failure
       mode: post-merge
