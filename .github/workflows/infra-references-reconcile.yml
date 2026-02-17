@@ -184,22 +184,22 @@ jobs:
             # Add comment to existing issue
             gh issue comment "$EXISTING" --repo teric-io/teric-planning --body "## Weekly Reconciliation Update ($(date +%Y-%m-%d))
 
-| Metric | Count |
-|--------|-------|
-| Drift detected | ${{ steps.reconcile.outputs.drift_count }} |
-| Stale repos | ${{ steps.reconcile.outputs.stale_repos }} |
-| Missing repos | ${{ steps.reconcile.outputs.missing_repos }} |
-| Orphaned references | ${{ steps.reconcile.outputs.orphaned }} |
+          | Metric | Count |
+          |--------|-------|
+          | Drift detected | ${{ steps.reconcile.outputs.drift_count }} |
+          | Stale repos | ${{ steps.reconcile.outputs.stale_repos }} |
+          | Missing repos | ${{ steps.reconcile.outputs.missing_repos }} |
+          | Orphaned references | ${{ steps.reconcile.outputs.orphaned }} |
 
-<details>
-<summary>Full Report</summary>
+          <details>
+          <summary>Full Report</summary>
 
-\`\`\`json
-$(cat reconciliation-report.json)
-\`\`\`
-</details>
+          \`\`\`json
+          $(cat reconciliation-report.json)
+          \`\`\`
+          </details>
 
-**Workflow run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          **Workflow run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           else
             echo "Creating new drift issue"
 
@@ -208,35 +208,35 @@ $(cat reconciliation-report.json)
               --label "proc-007,drift-detected,needs-human" \
               --body "## Drift Detected in Infrastructure References Registry
 
-The weekly reconciliation job detected drift between repositories and the registry.
+          The weekly reconciliation job detected drift between repositories and the registry.
 
-### Summary
+          ### Summary
 
-| Metric | Count |
-|--------|-------|
-| Drift detected | ${{ steps.reconcile.outputs.drift_count }} |
-| Stale repos | ${{ steps.reconcile.outputs.stale_repos }} |
-| Missing repos | ${{ steps.reconcile.outputs.missing_repos }} |
-| Orphaned references | ${{ steps.reconcile.outputs.orphaned }} |
+          | Metric | Count |
+          |--------|-------|
+          | Drift detected | ${{ steps.reconcile.outputs.drift_count }} |
+          | Stale repos | ${{ steps.reconcile.outputs.stale_repos }} |
+          | Missing repos | ${{ steps.reconcile.outputs.missing_repos }} |
+          | Orphaned references | ${{ steps.reconcile.outputs.orphaned }} |
 
-### Actions Required
+          ### Actions Required
 
-1. **Stale repos**: Re-run their CI pipelines to sync updated contracts
-2. **Missing repos**: Run \`contract-validator bootstrap-registry --repos <repo>\`
-3. **Orphaned references**: Review and clean up or add repos to known list
+          1. **Stale repos**: Re-run their CI pipelines to sync updated contracts
+          2. **Missing repos**: Run \`contract-validator bootstrap-registry --repos <repo>\`
+          3. **Orphaned references**: Review and clean up or add repos to known list
 
-### Related
+          ### Related
 
-- [PROC-007 Implementation Plan](https://github.com/teric-io/teric-planning/blob/main/PROC-007/IMPLEMENTATION-PLAN.md)
-- [Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - [PROC-007 Implementation Plan](https://github.com/teric-io/teric-planning/blob/main/PROC-007/IMPLEMENTATION-PLAN.md)
+          - [Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
-<details>
-<summary>Full Report</summary>
+          <details>
+          <summary>Full Report</summary>
 
-\`\`\`json
-$(cat reconciliation-report.json)
-\`\`\`
-</details>"
+          \`\`\`json
+          $(cat reconciliation-report.json)
+          \`\`\`
+          </details>"
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

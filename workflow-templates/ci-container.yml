@@ -99,16 +99,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Contract validation (PROC-007)
-  contract-validation:
-    name: Contract Validation
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    uses: teric-io/.github/.github/workflows/contract-validation.yml@main
-    with:
-      advisory_only: false
-    secrets: inherit
-
   # Deploy to ECS (main branch only)
   deploy:
     name: Deploy
