@@ -54,6 +54,8 @@ jobs:
           KEEP_VERSIONS: ${{ inputs.keep_versions }}
           AWS_REGION: ${{ inputs.aws_region }}
         run: |
+          set -euo pipefail
+
           total_deleted=0
           total_errors=0
 
@@ -67,22 +69,29 @@ jobs:
 
             # Get aliased versions (protected from deletion)
             aliased=()
+            if ! aliases_output=$(aws lambda list-aliases --function-name "$fn" --region "$AWS_REGION" \
+              --query 'Aliases[].[Name,FunctionVersion]' --output text 2>&1); then
+              echo "  WARNING: Failed to list aliases for $fn: $aliases_output"
+              echo "  Skipping this function to avoid accidental deletion of aliased versions"
+              echo "| $fn | ERROR | - | - |" >> $GITHUB_STEP_SUMMARY
+              total_errors=$((total_errors + 1))
+              continue
+            fi
             while IFS=$'\t' read -r _ alias_ver; do
               [[ -n "$alias_ver" ]] && aliased+=("$alias_ver")
-            done < <(aws lambda list-aliases --function-name "$fn" --region "$AWS_REGION" \
-              --query 'Aliases[].[Name,FunctionVersion]' --output text 2>/dev/null || true)
+            done <<< "$aliases_output"
 
             # Get all published versions with pagination
             versions=()
             sizes=()
             marker=""
             while true; do
-              if [[ -z "$marker" ]]; then
-                resp=$(aws lambda list-versions-by-function --function-name "$fn" --region "$AWS_REGION" \
-                  --max-items 50 --output json 2>/dev/null)
-              else
-                resp=$(aws lambda list-versions-by-function --function-name "$fn" --region "$AWS_REGION" \
-                  --max-items 50 --starting-token "$marker" --output json 2>/dev/null)
+              if ! resp=$(aws lambda list-versions-by-function --function-name "$fn" --region "$AWS_REGION" \
+                --max-items 50 ${marker:+--starting-token "$marker"} --output json 2>&1); then
+                echo "  ERROR: Failed to list versions for $fn: $resp"
+                echo "| $fn | ERROR | - | - |" >> $GITHUB_STEP_SUMMARY
+                total_errors=$((total_errors + 1))
+                continue 2
               fi
 
               while IFS=$'\t' read -r ver size; do
@@ -129,7 +138,12 @@ jobs:
 
             # Delete old versions
             for ver in "${deletable[@]}"; do
-              if aws lambda delete-function --function-name "$fn" --qualifier "$ver" --region "$AWS_REGION" 2>/dev/null; then
+              # Defensive check - never delete $LATEST
+              if [[ "$ver" == "\$LATEST" ]]; then
+                echo "  SKIPPED: Refusing to delete \$LATEST"
+                continue
+              fi
+              if aws lambda delete-function --function-name "$fn" --qualifier "$ver" --region "$AWS_REGION" 2>&1; then
                 fn_deleted=$((fn_deleted + 1))
               else
                 echo "  WARNING: Failed to delete $fn:$ver"
@@ -140,7 +154,11 @@ jobs:
             total_deleted=$((total_deleted + fn_deleted))
 
             if [[ $delete_count -gt 0 ]]; then
-              echo "  Deleted $fn_deleted/$delete_count old versions (kept $aliased_count aliased + $KEEP_VERSIONS recent)"
+              if [[ $fn_deleted -lt $delete_count ]]; then
+                echo "  Deleted $fn_deleted/$delete_count old versions (kept $aliased_count aliased + $KEEP_VERSIONS recent, $((delete_count - fn_deleted)) failed)"
+              else
+                echo "  Deleted $fn_deleted old versions (kept $aliased_count aliased + $KEEP_VERSIONS recent)"
+              fi
             fi
 
             echo "| $fn | $total_versions | $aliased_count | $fn_deleted |" >> $GITHUB_STEP_SUMMARY
