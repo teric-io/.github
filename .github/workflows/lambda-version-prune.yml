@@ -26,10 +26,10 @@ on:
         required: false
         default: 'us-west-2'
         type: string
+    secrets:
       aws_role_arn:
         description: 'IAM role ARN to assume via OIDC (must have lambda:ListVersionsByFunction, lambda:ListAliases, lambda:DeleteFunction permissions)'
         required: true
-        type: string
 
 permissions:
   id-token: write
@@ -45,7 +45,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ inputs.aws_role_arn }}
+          role-to-assume: ${{ secrets.aws_role_arn }}
           aws-region: ${{ inputs.aws_region }}
 
       - name: Prune old Lambda versions
