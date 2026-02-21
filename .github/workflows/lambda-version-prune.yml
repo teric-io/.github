@@ -1,0 +1,174 @@
+# Lambda Version Pruner
+#
+# Reusable workflow that prunes old Lambda function versions after deployment.
+# Call this workflow from any repo's post-deploy step to prevent
+# CodeStorageExceededException (75 GB account limit).
+#
+# Keeps: $LATEST, all aliased versions, and the most recent N non-aliased versions.
+# Deletes everything else for the specified functions.
+
+name: Prune Lambda Versions
+
+on:
+  workflow_call:
+    inputs:
+      function_names:
+        description: 'Space-separated list of Lambda function names to prune'
+        required: true
+        type: string
+      keep_versions:
+        description: 'Number of recent non-aliased versions to keep (default: 3)'
+        required: false
+        default: '3'
+        type: string
+      aws_region:
+        description: 'AWS region'
+        required: false
+        default: 'us-west-2'
+        type: string
+      aws_role_arn:
+        description: 'IAM role ARN to assume via OIDC (must have lambda:ListVersionsByFunction, lambda:ListAliases, lambda:DeleteFunction permissions)'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  prune:
+    name: Prune Old Versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws_role_arn }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Prune old Lambda versions
+        env:
+          FUNCTION_NAMES: ${{ inputs.function_names }}
+          KEEP_VERSIONS: ${{ inputs.keep_versions }}
+          AWS_REGION: ${{ inputs.aws_region }}
+        run: |
+          set -euo pipefail
+
+          total_deleted=0
+          total_errors=0
+
+          echo "### Lambda Version Prune" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Function | Versions | Aliased | Deleted |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|----------|---------|---------|" >> $GITHUB_STEP_SUMMARY
+
+          for fn in $FUNCTION_NAMES; do
+            echo "Processing: $fn"
+
+            # Get aliased versions (protected from deletion)
+            aliased=()
+            if ! aliases_output=$(aws lambda list-aliases --function-name "$fn" --region "$AWS_REGION" \
+              --query 'Aliases[].[Name,FunctionVersion]' --output text 2>&1); then
+              echo "  WARNING: Failed to list aliases for $fn: $aliases_output"
+              echo "  Skipping this function to avoid accidental deletion of aliased versions"
+              echo "| $fn | ERROR | - | - |" >> $GITHUB_STEP_SUMMARY
+              total_errors=$((total_errors + 1))
+              continue
+            fi
+            while IFS=$'\t' read -r _ alias_ver; do
+              [[ -n "$alias_ver" ]] && aliased+=("$alias_ver")
+            done <<< "$aliases_output"
+
+            # Get all published versions with pagination
+            versions=()
+            sizes=()
+            marker=""
+            while true; do
+              if ! resp=$(aws lambda list-versions-by-function --function-name "$fn" --region "$AWS_REGION" \
+                --max-items 50 ${marker:+--starting-token "$marker"} --output json 2>&1); then
+                echo "  ERROR: Failed to list versions for $fn: $resp"
+                echo "| $fn | ERROR | - | - |" >> $GITHUB_STEP_SUMMARY
+                total_errors=$((total_errors + 1))
+                continue 2
+              fi
+
+              while IFS=$'\t' read -r ver size; do
+                [[ "$ver" != "\$LATEST" && -n "$ver" ]] && versions+=("$ver") && sizes+=("$size")
+              done < <(echo "$resp" | jq -r '.Versions[] | select(.Version != "$LATEST") | [.Version, (.CodeSize | tostring)] | @tsv')
+
+              marker=$(echo "$resp" | jq -r '.NextToken // empty')
+              [[ -z "$marker" ]] && break
+            done
+
+            total_versions=${#versions[@]}
+            aliased_count=${#aliased[@]}
+
+            # Sort versions descending, skip aliased and newest KEEP_VERSIONS
+            deletable=()
+            if [[ $total_versions -gt 0 ]]; then
+              mapfile -t sorted_indices < <(
+                for i in "${!versions[@]}"; do
+                  echo "$i ${versions[$i]}"
+                done | sort -k2 -rn | awk '{print $1}'
+              )
+
+              kept=0
+              for idx in "${sorted_indices[@]}"; do
+                ver="${versions[$idx]}"
+                is_aliased=false
+                if [[ ${#aliased[@]} -gt 0 ]]; then
+                  for av in "${aliased[@]}"; do
+                    [[ "$ver" == "$av" ]] && is_aliased=true && break
+                  done
+                fi
+                $is_aliased && continue
+
+                if [[ $kept -lt $KEEP_VERSIONS ]]; then
+                  kept=$((kept + 1))
+                  continue
+                fi
+                deletable+=("$ver")
+              done
+            fi
+
+            delete_count=${#deletable[@]}
+            fn_deleted=0
+
+            # Delete old versions
+            for ver in "${deletable[@]}"; do
+              # Defensive check - never delete $LATEST
+              if [[ "$ver" == "\$LATEST" ]]; then
+                echo "  SKIPPED: Refusing to delete \$LATEST"
+                continue
+              fi
+              if aws lambda delete-function --function-name "$fn" --qualifier "$ver" --region "$AWS_REGION" 2>&1; then
+                fn_deleted=$((fn_deleted + 1))
+              else
+                echo "  WARNING: Failed to delete $fn:$ver"
+                total_errors=$((total_errors + 1))
+              fi
+            done
+
+            total_deleted=$((total_deleted + fn_deleted))
+
+            if [[ $delete_count -gt 0 ]]; then
+              if [[ $fn_deleted -lt $delete_count ]]; then
+                echo "  Deleted $fn_deleted/$delete_count old versions (kept $aliased_count aliased + $KEEP_VERSIONS recent, $((delete_count - fn_deleted)) failed)"
+              else
+                echo "  Deleted $fn_deleted old versions (kept $aliased_count aliased + $KEEP_VERSIONS recent)"
+              fi
+            fi
+
+            echo "| $fn | $total_versions | $aliased_count | $fn_deleted |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Total deleted**: $total_deleted versions" >> $GITHUB_STEP_SUMMARY
+          if [[ $total_errors -gt 0 ]]; then
+            echo "**Errors**: $total_errors" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo ""
+          echo "=== Prune complete: deleted $total_deleted versions ($total_errors errors) ==="
