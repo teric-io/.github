@@ -1,0 +1,59 @@
+# PROC-010: Notify Downstream Consumers
+#
+# Reusable workflow that dispatches a repository_dispatch event to
+# teric-agent-container when an MCP package publishes a new version.
+#
+# Usage:
+#   notify-downstream:
+#     needs: publish
+#     if: github.ref == 'refs/heads/main' && needs.publish.result == 'success'
+#     uses: teric-io/.github/.github/workflows/notify-downstream.yml@main
+#     with:
+#       package_name: "@teric-io/mcp-work-coordinator"
+#       version: ${{ needs.publish.outputs.version }}
+#     secrets:
+#       cross_repo_writer_private_key: ${{ secrets.CROSS_REPO_WRITER_PRIVATE_KEY }}
+
+name: Notify Downstream Consumers
+
+on:
+  workflow_call:
+    inputs:
+      package_name:
+        required: true
+        type: string
+        description: 'Full npm package name (e.g., @teric-io/mcp-work-coordinator)'
+      version:
+        required: true
+        type: string
+        description: 'Published version (semver, e.g., 1.2.3)'
+    secrets:
+      cross_repo_writer_private_key:
+        required: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate cross-repo token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.CROSS_REPO_WRITER_APP_ID }}
+          private-key: ${{ secrets.cross_repo_writer_private_key }}
+          owner: teric-io
+          repositories: teric-agent-container
+
+      - name: Dispatch dependency-updated event
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          repository: teric-io/teric-agent-container
+          event-type: dependency-updated
+          client-payload: >-
+            {
+              "package": "${{ inputs.package_name }}",
+              "version": "${{ inputs.version }}",
+              "source_repo": "${{ github.repository }}",
+              "source_sha": "${{ github.sha }}"
+            }
