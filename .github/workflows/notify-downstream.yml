@@ -47,6 +47,19 @@ jobs:
           owner: teric-io
           repositories: teric-agent-container
 
+      - name: Grant package access to teric-agent-container
+        continue-on-error: true
+        run: |
+          PACKAGE_NAME="${{ inputs.package_name }}"
+          # Strip @teric-io/ scope prefix
+          BARE_NAME="${PACKAGE_NAME#@teric-io/}"
+          echo "Granting teric-agent-container access to package: $BARE_NAME"
+          gh api --method PUT \
+            "/orgs/teric-io/packages/npm/${BARE_NAME}/repositories/1078512074" \
+            --silent && echo "Access granted" || echo "::warning::Could not grant package access (may require source repo token)"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
       - name: Dispatch dependency-updated event
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
