@@ -7,10 +7,15 @@
 # Keeps: $LATEST, all aliased versions, and the most recent N non-aliased versions.
 # Deletes everything else for the specified functions.
 #
-# Credential options:
-#   1. Pass aws_role_arn secret directly (for repo-level secrets)
-#   2. Pass environment input + secrets: inherit (for environment-scoped secrets)
-#      The workflow checks aws_role_arn, AWS_DEPLOY_ROLE_ARN, AWS_DEPLOYMENT_ROLE_ARN
+# Credential resolution (checked in order):
+#   1. aws_role_arn secret input (explicit, for repo-level secrets)
+#   2. AWS_DEPLOY_ROLE_ARN environment secret (via environment input, default: production)
+#   3. AWS_DEPLOYMENT_ROLE_ARN environment secret (fallback)
+#
+# Callers can use any of:
+#   - secrets: inherit                              (inherits all secrets; environment defaults to production)
+#   - secrets: { aws_role_arn: ${{ secrets.X }} }   (explicit role ARN from repo-level secret)
+#   - with: { environment: production } + secrets: inherit
 
 name: Prune Lambda Versions
 
@@ -32,8 +37,9 @@ on:
         default: 'us-west-2'
         type: string
       environment:
-        description: 'GitHub Environment for OIDC credentials (e.g. production). Use with secrets: inherit when the role ARN is an environment-scoped secret.'
+        description: 'GitHub Environment for OIDC credentials. Defaults to production so environment-scoped secrets (AWS_DEPLOY_ROLE_ARN) are accessible without explicit aws_role_arn.'
         required: false
+        default: 'production'
         type: string
     secrets:
       aws_role_arn:
