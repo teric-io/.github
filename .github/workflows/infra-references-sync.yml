@@ -38,6 +38,13 @@ on:
         required: false
         default: 'bootstrap-v1'
         type: string
+    secrets:
+      NPM_READ_PACKAGES_TOKEN:
+        description: 'Classic PAT with read:packages for GitHub Packages npm installs'
+        required: false
+      DEPENDABOT_GITHUB_PACKAGES_TOKEN:
+        description: 'Existing org PAT with read:packages; used as a fallback until repos standardize on NPM_READ_PACKAGES_TOKEN'
+        required: false
 
 permissions:
   id-token: write
@@ -85,7 +92,7 @@ jobs:
           echo "Installing @teric-io/contracts@${{ inputs.contracts_version }}"
           npm install -g @teric-io/contracts@${{ inputs.contracts_version }}
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_READ_PACKAGES_TOKEN || secrets.DEPENDABOT_GITHUB_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Verify CLI installation
         if: steps.check-config.outputs.has_config == 'true'
