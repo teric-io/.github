@@ -41,7 +41,7 @@ if (!fs.existsSync(SOURCE_REPO_PATH)) {
 const FILE_PRIORITIES = [
   // Priority 1: Always read
   { path: "package.json", required: false },
-  { path: "CLAUDE.md", required: false },
+  { path: "AGENTS.md", required: false },
   { path: "README.md", required: false, maxLines: 100 },
   { path: "tsconfig.json", required: false },
   { path: "infra.contracts.yaml", required: false },
