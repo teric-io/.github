@@ -10,8 +10,13 @@ Located in `.github/workflows/`:
 
 | Workflow | Purpose | Usage |
 |----------|---------|-------|
-| `infra-references-sync.yml` | Sync infrastructure references on PR merge | `uses: teric-io/.github/.github/workflows/infra-references-sync.yml@main` |
-| `infra-references-reconcile.yml` | Weekly drift detection and repair | Runs on schedule (Mondays 6 AM UTC) |
+| `infra-references-sync.yml` | Retired compatibility shim for old PROC-007 callers | Existing `uses: teric-io/.github/.github/workflows/infra-references-sync.yml@main` calls succeed without syncing |
+| `infra-references-reconcile.yml` | Retired manual-only compatibility shim | No scheduled reconciliation |
+
+The PROC-007 central infra references registry was abandoned after the Phase 1
+cleanup. Repositories should still keep `infra.contracts.yaml` files updated as
+repo-local dependency declarations, but they should not expect a central
+Lambda/DynamoDB registry sync.
 
 ---
 
@@ -49,8 +54,8 @@ Located in `profile/README.md` - displayed on the organization's GitHub page.
 
 ## Related Documentation
 
-- [PROC-007: Early Integration Bug Detection](https://github.com/teric-io/teric-planning/blob/main/PROC-007-early-integration-bug-detection.md)
-- [@teric-io/contracts Package](https://github.com/teric-io/teric-contracts)
+- [Integration Contracts Guidelines](https://github.com/teric-io/teric-meta/blob/main/guidelines/INTEGRATION_CONTRACTS_GUIDELINES.md)
+- [PROC-007 historical record](https://github.com/teric-io/teric-planning/blob/main/archive/phase-1/completed/PROC-007-early-integration-bug-detection.md)
 
 ---
 
@@ -62,7 +67,3 @@ Changes to this repository affect all teric-io repositories. Please:
 2. Create a PR with clear description of changes
 3. Get approval from platform team
 4. Run validation tests locally before merging
-
----
-
-*Part of [PROC-007: Early Integration Bug Detection](https://github.com/teric-io/teric-planning/blob/main/PROC-007-early-integration-bug-detection.md)*

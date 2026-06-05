@@ -1,19 +1,12 @@
-# PROC-007 Phase 6.2: Infrastructure References Sync
+# Retired PROC-007 Phase 6.2: Infrastructure References Sync
 #
-# Reusable workflow that syncs infra.contracts.yaml to the registry.
-# Call this workflow from any repo's push-to-main workflow.
-#
-# This workflow:
-# 1. Installs the @teric-io/contracts CLI
-# 2. Assumes OIDC role for Lambda invocation (PROC-007 v1.5 architecture)
-# 3. Runs sync-references which invokes Lambda to update the registry
-#
-# Related:
-# - PROC-007-early-integration-bug-detection.md
-# - teric-contracts/src/cli/commands/sync-references.ts
-# - infra-references-reconcile.yml (weekly drift detection)
+# This reusable workflow is intentionally kept as a compatibility shim for
+# repositories that still call it. The PROC-007 registry Lambda and DynamoDB
+# table were decommissioned during the Phase 1 cleanup, so this workflow no
+# longer installs @teric-io/contracts, assumes AWS credentials, or writes to a
+# central registry.
 
-name: Sync Infra References
+name: Sync Infra References (Retired)
 
 on:
   workflow_call:
@@ -24,175 +17,60 @@ on:
         default: 'infra.contracts.yaml'
         type: string
       dry_run:
-        description: 'Dry run (show what would be synced without writing)'
+        description: 'Retained for compatibility; ignored because sync is retired'
         required: false
         default: false
         type: boolean
       aws_account_id:
-        description: 'AWS account ID for OIDC role assumption (not sensitive - appears in public ARNs)'
+        description: 'Retained for compatibility; ignored because sync is retired'
         required: false
         default: '449923455111'
         type: string
       contracts_version:
-        description: 'Version tag for @teric-io/contracts package (e.g., bootstrap-v1, latest)'
+        description: 'Retained for compatibility; ignored because sync is retired'
         required: false
         default: 'bootstrap-v1'
         type: string
     secrets:
       NPM_READ_PACKAGES_TOKEN:
-        description: 'Classic PAT with read:packages for GitHub Packages npm installs'
+        description: 'Retained for compatibility; ignored because sync is retired'
         required: false
       DEPENDABOT_GITHUB_PACKAGES_TOKEN:
-        description: 'Existing org PAT with read:packages; used as a fallback until repos standardize on NPM_READ_PACKAGES_TOKEN'
+        description: 'Retained for compatibility; ignored because sync is retired'
         required: false
 
 permissions:
-  id-token: write
   contents: read
-  packages: read
-
-env:
-  # PROC-007 v1.5: CLI invokes Lambda intermediary, Lambda writes to DynamoDB
-  LAMBDA_NAME: teric-agentic-infra-references-sync
-  LAMBDA_ALIAS: stable
-  # Must match terraform-definitions/aws-agentic region
-  AWS_REGION: us-west-2
 
 jobs:
-  sync:
-    name: Sync References
+  retired:
+    name: Report Retired Sync
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check for infra.contracts.yaml
-        id: check-config
+      - name: Report retired PROC-007 sync
         run: |
           if [[ -f "${{ inputs.config_path }}" ]]; then
-            echo "has_config=true" >> $GITHUB_OUTPUT
-            echo "✓ Found ${{ inputs.config_path }}"
+            HAS_CONFIG="yes"
           else
-            echo "has_config=false" >> $GITHUB_OUTPUT
-            echo "⚠ No ${{ inputs.config_path }} found - skipping sync"
+            HAS_CONFIG="no"
           fi
 
-      - name: Setup Node.js
-        if: steps.check-config.outputs.has_config == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://npm.pkg.github.com'
-
-      - name: Install contracts CLI
-        if: steps.check-config.outputs.has_config == 'true'
-        run: |
-          echo "Installing @teric-io/contracts@${{ inputs.contracts_version }}"
-          npm install -g @teric-io/contracts@${{ inputs.contracts_version }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_READ_PACKAGES_TOKEN || secrets.DEPENDABOT_GITHUB_PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
-
-      - name: Verify CLI installation
-        if: steps.check-config.outputs.has_config == 'true'
-        run: |
-          which contract-validator || {
-            echo "ERROR: contract-validator command not found in PATH"
-            echo "Available global packages:"
-            npm list -g --depth=0
-            exit 1
-          }
-          contract-validator --version
-
-      - name: Configure AWS credentials (OIDC)
-        if: steps.check-config.outputs.has_config == 'true'
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ inputs.aws_account_id }}:role/teric-agentic-infra-sync-role
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Sync references to registry
-        if: steps.check-config.outputs.has_config == 'true'
-        id: sync
-        run: |
-          echo "Syncing infra.contracts.yaml to registry..."
-
-          # Set dry-run flag if requested
-          DRY_RUN_FLAG=""
-          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
-            DRY_RUN_FLAG="--dry-run"
-          fi
-
-          # Log command for debugging (PROC-007 v1.5 Lambda intermediary pattern)
-          echo "Running: contract-validator sync-references --lambda ${{ env.LAMBDA_NAME }} --alias ${{ env.LAMBDA_ALIAS }} --config ${{ inputs.config_path }} --output json $DRY_RUN_FLAG"
-
-          # Run sync directly without eval (security best practice)
-          # PROC-007 v1.5: CLI invokes Lambda intermediary, Lambda writes to DynamoDB
-          if ! contract-validator sync-references \
-            --lambda "${{ env.LAMBDA_NAME }}" \
-            --alias "${{ env.LAMBDA_ALIAS }}" \
-            --config "${{ inputs.config_path }}" \
-            --output json \
-            $DRY_RUN_FLAG > sync-result.json 2>&1; then
-            echo "ERROR: Sync command failed"
-            cat sync-result.json
-            exit 1
-          fi
-
-          # Extract results
-          SUCCESS=$(jq -r '.success' sync-result.json)
-          REFERENCES=$(jq -r '.referencesSynced // 0' sync-result.json)
-          REPO=$(jq -r '.repository' sync-result.json)
-          DURATION=$(jq -r '.durationMs // 0' sync-result.json)
-
-          echo "success=$SUCCESS" >> $GITHUB_OUTPUT
-          echo "references=$REFERENCES" >> $GITHUB_OUTPUT
-          echo "repository=$REPO" >> $GITHUB_OUTPUT
-          echo "duration=$DURATION" >> $GITHUB_OUTPUT
-
-          # Write summary
-          echo "### Sync References Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [[ "${{ inputs.dry_run }}" == "true" ]]; then
-            echo "**Mode**: Dry Run (no changes written)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**Mode**: Production" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Repository | $REPO |" >> $GITHUB_STEP_SUMMARY
-          echo "| References synced | $REFERENCES |" >> $GITHUB_STEP_SUMMARY
-          echo "| Duration | ${DURATION}ms |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
-
-          # Show references by type
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**References by type:**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          jq -r '.referencesByType | to_entries[] | "- \(.key): \(.value)"' sync-result.json >> $GITHUB_STEP_SUMMARY || true
-
-          if [[ "$SUCCESS" != "true" ]]; then
-            echo "::error::Sync failed - check sync-result.json for details"
-            exit 1
-          fi
-
-      - name: Upload sync result
-        if: steps.check-config.outputs.has_config == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: sync-result
-          path: sync-result.json
-          retention-days: 7
-
-      - name: Report skipped
-        if: steps.check-config.outputs.has_config == 'false'
-        run: |
-          echo "### Sync Skipped" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "No \`${{ inputs.config_path }}\` file found in repository." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "To enable infrastructure reference syncing:" >> $GITHUB_STEP_SUMMARY
-          echo "1. Create an \`infra.contracts.yaml\` file" >> $GITHUB_STEP_SUMMARY
-          echo "2. Run \`contract-validator init\` to bootstrap" >> $GITHUB_STEP_SUMMARY
+          echo "::notice title=PROC-007 sync retired::infra.contracts.yaml remains useful as a repo-local dependency declaration, but the central PROC-007 registry sync has been abandoned."
+          {
+            echo "### PROC-007 Registry Sync Retired"
+            echo ""
+            echo "This workflow is now a compatibility shim and does not write to a central registry."
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Config path | \`${{ inputs.config_path }}\` |"
+            echo "| Config present | $HAS_CONFIG |"
+            echo "| Dry run input | \`${{ inputs.dry_run }}\` |"
+            echo ""
+            echo "Keep \`infra.contracts.yaml\` updated for cross-repo dependency declarations. Do not depend on the old PROC-007 Lambda/DynamoDB registry."
+          } >> "$GITHUB_STEP_SUMMARY"
