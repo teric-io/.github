@@ -25,23 +25,25 @@ Teric is a research project exploring the intersection of AI agents and software
 | [mcp-work-coordinator](https://github.com/teric-io/mcp-work-coordinator) | Work item management MCP server |
 | [mcp-knowledge-graph](https://github.com/teric-io/mcp-knowledge-graph) | Knowledge storage MCP server |
 
-## Contract-Driven Development (PROC-007)
+## Integration Dependency Declarations
 
-We use infrastructure contracts to catch integration bugs early:
+We use `infra.contracts.yaml` files to declare cross-repo infrastructure and
+service dependencies:
 
 ```yaml
-# infra.contracts.yaml - Declare infrastructure dependencies
-contracts:
-  source: "@teric-io/contracts"
-  tag: stable
-
+# infra.contracts.yaml
 dynamodb:
   tables:
     - name: work-items
-      contract: "@teric-io/contracts/dynamodb/work-items"
+      operations:
+        - GetItem
+        - Query
 ```
 
-[Learn more about contract validation →](https://github.com/teric-io/teric-planning/blob/main/PROC-007-early-integration-bug-detection.md)
+The old PROC-007 central registry sync is retired; declarations remain useful
+as repo-local source material for implementation and review.
+
+[Read the integration contracts guidelines](https://github.com/teric-io/teric-meta/blob/main/guidelines/INTEGRATION_CONTRACTS_GUIDELINES.md)
 
 ## Contributing
 
