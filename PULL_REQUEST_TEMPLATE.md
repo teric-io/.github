@@ -47,10 +47,11 @@ CI evidence: N/A
 
 ## Skipped Checks
 
-<!-- Every skipped expected check needs an explicit reason and risk classification. -->
+<!-- Every skipped expected check needs an explicit reason, disposition, and impact risk. -->
 - Check: N/A
   Reason: N/A
-  Risk classification: N/A
+  Disposition: N/A <!-- blocker | accepted-risk | not-applicable -->
+  Impact risk: N/A
   Reviewer acceptance required: N/A
 
 ## Deployment And Operations
