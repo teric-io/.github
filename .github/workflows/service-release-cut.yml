@@ -15,10 +15,14 @@ on:
         required: true
         type: string
         description: Verified registry manifest package reference pinned by SHA-256.
+      package-artifact-id:
+        required: true
+        type: string
+        description: ID of the package workflow artifact from this run.
       evidence-artifact-id:
         required: true
         type: string
-        description: Artifact ID from this run containing release-manifest.json and sbom.json.
+        description: Artifact ID from this run containing the service contract, SBOM and registry/provenance evidence.
     outputs:
       release-id:
         value: ${{ jobs.cut.outputs.release-id }}
@@ -26,6 +30,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   cut:
@@ -52,15 +57,36 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: tooling
           persist-credentials: false
-      - name: Require one evidence artifact
+      - name: Bind the proof artifact to the protected run
         env:
           ARTIFACT_ID: ${{ inputs.evidence-artifact-id }}
-        run: '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]'
+          PACKAGE_ID: ${{ inputs.package-artifact-id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ && "$PACKAGE_ID" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" |
+            jq -e --arg name "service-release-proof-$GITHUB_RUN_ID" --arg sha "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" '
+              (.expired == false) and (.name == $name) and (.workflow_run.head_sha == $sha) and
+              ((.workflow_run.id | tostring) == $run)' >/dev/null
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           artifact-ids: ${{ inputs.evidence-artifact-id }}
           path: evidence
           merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ inputs.package-artifact-id }}
+          path: package
+          merge-multiple: true
+      - name: Bind draft assets to package and registry evidence
+        env:
+          TRUSTED_CUT_WORKFLOW: ${{ vars.RELEASE_CUT_WORKFLOW_REF }}
+          APPROVED_IMAGE_REPOSITORY: ${{ vars.RELEASE_IMAGE_REPOSITORY }}
+          APPROVED_PACKAGE_REPOSITORY: ${{ vars.RELEASE_PACKAGE_REPOSITORY }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          IMAGE_REFERENCE: ${{ inputs.image-reference }}
+          PACKAGE_REFERENCE: ${{ inputs.package-reference }}
+        run: python3 -I tooling/scripts/service-release/release.py prepare
       - id: token
         uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
         with:

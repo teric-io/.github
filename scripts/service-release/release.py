@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import tarfile
 from pathlib import Path
 
 VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
@@ -31,27 +32,47 @@ def validate_identity(metadata, repository, tag, commit):
         require(REFERENCE.fullmatch(metadata[key]), f"{key} must be a fully qualified digest reference")
 
 
-def release_assets(source, output, metadata):
-    files = {}
-    for name in ("release-manifest.json", "sbom.json"):
-        path = source / name
-        require(path.is_file() and not path.is_symlink(), f"Missing regular file {name}")
-        files[name] = path.read_bytes()
-        require(isinstance(json.loads(files[name]), dict), f"{name} must be a JSON object")
+ASSET_NAMES = {"release.json", "release-manifest.json", "sbom.json", "registry-proof.json", "SHA256SUMS"}
+
+
+def checksum_file(files):
+    return "".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in sorted(files.items())
+                   if name != "SHA256SUMS").encode()
+
+
+def validate_evidence(files, metadata):
     contract = json.loads(files["release-manifest.json"])
     require(all(key in contract for key in ("provides", "requires", "schema")), "Missing release contract fields")
     sbom = json.loads(files["sbom.json"])
     require(sbom.get("spdxVersion") or sbom.get("bomFormat") == "CycloneDX", "Expected SPDX or CycloneDX JSON")
+    receipt = json.loads(files["registry-proof.json"])
+    require(isinstance(receipt.get("provenance_ref"), str) and receipt["provenance_ref"].strip(),
+            "Missing verified build provenance reference")
+    require(all(receipt.get(key) == value for key, value in metadata.items())
+            and receipt.get("provenance_verified") is True, "Invalid registry proof")
+
+
+def release_assets(source, output, metadata):
+    files = {}
+    for name in ("release-manifest.json", "sbom.json", "registry-proof.json"):
+        path = source / name
+        require(path.is_file() and not path.is_symlink(), f"Missing regular file {name}")
+        files[name] = path.read_bytes()
+        require(isinstance(json.loads(files[name]), dict), f"{name} must be a JSON object")
+    validate_evidence(files, metadata)
+    receipt = json.loads(files["registry-proof.json"])
+    # A retry of the same run can repeat the readback. Retain the stable run ID in the draft.
+    receipt.pop("run_attempt", None)
+    files["registry-proof.json"] = (json.dumps(receipt, sort_keys=True, indent=2) + "\n").encode()
     files["release.json"] = (json.dumps(metadata, indent=2, sort_keys=True) + "\n").encode()
-    files["SHA256SUMS"] = "".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n"
-                                  for name, data in sorted(files.items())).encode()
+    files["SHA256SUMS"] = checksum_file(files)
     output.mkdir()
     for name, data in files.items():
         (output / name).write_bytes(data)
     return files
 
 
-def draft():
+def cut_metadata():
     require(os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch"
             and os.environ["GITHUB_REF"] == "refs/heads/main"
             and os.environ.get("GITHUB_REF_PROTECTED") == "true", "Cut requires a dispatch on protected main")
@@ -59,8 +80,61 @@ def draft():
     metadata = {"repository": repository, "version": tag, "commit": commit,
                 "image": os.environ["IMAGE_REFERENCE"], "package": os.environ["PACKAGE_REFERENCE"]}
     validate_identity(metadata, repository, tag, commit)
+    return metadata
+
+
+def verify_cut_inputs(evidence, layout):
+    metadata = cut_metadata()
+    workflow = os.environ["TRUSTED_CUT_WORKFLOW"]
+    require(workflow == os.environ["GITHUB_WORKFLOW_REF"]
+            and workflow.startswith(metadata["repository"] + "/.github/workflows/")
+            and workflow.endswith("@refs/heads/main"), "Unapproved caller workflow")
+    receipt = json.loads((evidence / "registry-proof.json").read_bytes())
+    expected = {**metadata, "workflow": workflow, "run_id": os.environ["GITHUB_RUN_ID"],
+                "provenance_verified": True}
+    require(all(receipt.get(key) == value for key, value in expected.items()), "Registry proof does not match cut")
+    attempt = receipt.get("run_attempt")
+    require(isinstance(attempt, str) and attempt.isdecimal()
+            and 1 <= int(attempt) <= int(os.environ["GITHUB_RUN_ATTEMPT"]), "Invalid evidence run attempt")
+    for kind in ("image", "package"):
+        repo, digest = metadata[kind].rsplit("@", 1)
+        require(repo == os.environ["APPROVED_" + kind.upper() + "_REPOSITORY"], "Unapproved registry repository")
+        raw = (evidence / (kind + "-oci.json")).read_bytes()
+        require("sha256:" + hashlib.sha256(raw).hexdigest() == digest, f"{kind} registry digest mismatch")
+        require(json.loads(raw).get("schemaVersion") == 2, f"Invalid {kind} registry manifest")
+
+    digest = metadata["package"].rsplit("@", 1)[1]
+    with tarfile.open(layout, "r:") as archive:
+        descriptors = json.load(archive.extractfile("index.json"))["manifests"]
+        require(len(descriptors) == 1 and descriptors[0]["digest"] == digest, "OCI layout digest mismatch")
+
+        def read_blob(descriptor):
+            address = descriptor["digest"]
+            require(re.fullmatch(r"sha256:[a-f0-9]{64}", address), "Invalid OCI blob digest")
+            data = archive.extractfile("blobs/" + address.replace(":", "/")).read()
+            require("sha256:" + hashlib.sha256(data).hexdigest() == address
+                    and len(data) == descriptor["size"], "Corrupt OCI blob")
+            return data
+
+        manifest = json.loads(read_blob(descriptors[0]))
+        require(manifest["annotations"]["org.opencontainers.image.revision"] == metadata["commit"],
+                "Package source revision mismatch")
+        read_blob(manifest["config"])
+        layers = manifest["layers"]
+        require(len(layers) == 1 and layers[0]["mediaType"] == "application/vnd.oci.image.layer.v1.tar+gzip",
+                "Unexpected rendered manifest layer")
+        read_blob(layers[0])
+
     assets = Path(os.environ["RUNNER_TEMP"]) / "service-release-assets"
-    files = release_assets(Path("evidence"), assets, metadata)
+    release_assets(evidence, assets, metadata)
+
+
+def draft():
+    metadata = cut_metadata()
+    repository, tag, commit = (metadata[key] for key in ("repository", "version", "commit"))
+    assets = Path(os.environ["RUNNER_TEMP"]) / "service-release-assets"
+    files = {f.name: f.read_bytes() for f in assets.iterdir()}
+    require(json.loads(files["release.json"]) == metadata, "Validated release metadata mismatch")
     releases = json.loads(gh("api", "--paginate", "--slurp", f"repos/{repository}/releases?per_page=100"))
     matches = [r for page in releases for r in page if r["tag_name"] == tag]
     require(len(matches) <= 1, "Multiple releases for this version")
@@ -109,12 +183,18 @@ def candidate():
     commit = api(f"repos/{repository}/commits/{tag}")["sha"]
     require(api(f"repos/{repository}/compare/{commit}...main")["status"] in ("identical", "ahead"),
             "Tagged source is not on main")
-    item = next((a for a in release["assets"] if a["name"] == "release.json"), None)
-    require(item is not None, "Missing release.json")
-    data = gh("api", "-H", "Accept: application/octet-stream", f"repos/{repository}/releases/assets/{item['id']}")
-    require(item.get("digest") == "sha256:" + hashlib.sha256(data).hexdigest(), "Release asset digest mismatch")
-    metadata = json.loads(data)
+    assets = release["assets"]
+    require(len(assets) == len(ASSET_NAMES) and {a["name"] for a in assets} == ASSET_NAMES,
+            "Incomplete or unexpected release assets")
+    files = {}
+    for asset in assets:
+        data = gh("api", "-H", "Accept: application/octet-stream", f"repos/{repository}/releases/assets/{asset['id']}")
+        require(asset.get("digest") == "sha256:" + hashlib.sha256(data).hexdigest(), "Release asset digest mismatch")
+        files[asset["name"]] = data
+    require(files["SHA256SUMS"] == checksum_file(files), "Release checksum inventory mismatch")
+    metadata = json.loads(files["release.json"])
     validate_identity(metadata, repository, tag, commit)
+    validate_evidence(files, metadata)
     return {"release-id": release["id"], "source-sha": commit, "version": tag,
             "package-reference": metadata["package"], "image-reference": metadata["image"]}
 
@@ -122,6 +202,9 @@ def candidate():
 if __name__ == "__main__":
     import sys
 
+    if sys.argv[1] == "prepare":
+        verify_cut_inputs(Path("evidence"), Path("package/oci-layout.tar"))
+        sys.exit(0)
     outputs = {"draft": draft, "candidate": candidate}[sys.argv[1]]()
     with open(os.environ["GITHUB_OUTPUT"], "a") as f:
         for key, value in outputs.items():
