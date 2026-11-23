@@ -1,0 +1,53 @@
+name: Verify published service release
+
+on:
+  workflow_call:
+    outputs:
+      release-id:
+        value: ${{ jobs.verify.outputs.release-id }}
+        description: Verified immutable release ID.
+      version:
+        value: ${{ jobs.verify.outputs.version }}
+        description: Published stable semantic version.
+      source-sha:
+        value: ${{ jobs.verify.outputs.source-sha }}
+        description: Tagged commit on main.
+      package-reference:
+        value: ${{ jobs.verify.outputs.package-reference }}
+        description: Digest-pinned package reference from the immutable release.
+      image-reference:
+        value: ${{ jobs.verify.outputs.image-reference }}
+        description: Digest-pinned container image reference from the immutable release.
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release-id: ${{ steps.verify.outputs.release-id }}
+      version: ${{ steps.verify.outputs.version }}
+      source-sha: ${{ steps.verify.outputs.source-sha }}
+      package-reference: ${{ steps.verify.outputs.package-reference }}
+      image-reference: ${{ steps.verify.outputs.image-reference }}
+    steps:
+      - name: Require the shared workflow revision
+        env:
+          SHARED_REPOSITORY: ${{ job.workflow_repository }}
+          SHARED_REVISION: ${{ job.workflow_sha }}
+        run: |
+          test -n "$SHARED_REPOSITORY"
+          [[ "$SHARED_REVISION" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+      - id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_APP_BOT_ID: ${{ vars.RELEASE_APP_BOT_ID }}
+        run: python3 -I tooling/scripts/service-release/release.py candidate

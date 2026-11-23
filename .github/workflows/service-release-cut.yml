@@ -1,0 +1,76 @@
+name: Cut draft service release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+        description: Stable version in vMAJOR.MINOR.PATCH form.
+      image-reference:
+        required: true
+        type: string
+        description: Verified registry image reference pinned by SHA-256.
+      package-reference:
+        required: true
+        type: string
+        description: Verified registry manifest package reference pinned by SHA-256.
+      evidence-artifact-id:
+        required: true
+        type: string
+        description: Artifact ID from this run containing release-manifest.json and sbom.json.
+    outputs:
+      release-id:
+        value: ${{ jobs.cut.outputs.release-id }}
+        description: Verified complete draft release ID.
+
+permissions:
+  contents: read
+
+jobs:
+  cut:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.ref_protected
+    environment: service-release-cut
+    concurrency:
+      group: service-release-cut-${{ inputs.version }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      release-id: ${{ steps.cut.outputs.release-id }}
+    steps:
+      - name: Require the shared workflow revision
+        env:
+          SHARED_REPOSITORY: ${{ job.workflow_repository }}
+          SHARED_REVISION: ${{ job.workflow_sha }}
+        run: |
+          test -n "$SHARED_REPOSITORY"
+          [[ "$SHARED_REVISION" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Require one evidence artifact
+        env:
+          ARTIFACT_ID: ${{ inputs.evidence-artifact-id }}
+        run: '[[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ inputs.evidence-artifact-id }}
+          path: evidence
+          merge-multiple: true
+      - id: token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+      - id: cut
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          IMAGE_REFERENCE: ${{ inputs.image-reference }}
+          PACKAGE_REFERENCE: ${{ inputs.package-reference }}
+        run: python3 -I tooling/scripts/service-release/release.py draft

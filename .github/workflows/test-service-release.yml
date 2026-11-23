@@ -1,0 +1,47 @@
+name: Test service release workflows
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/*service-release*.yml'
+      - 'scripts/service-release/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/*service-release*.yml'
+      - 'scripts/service-release/**'
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s scripts/service-release
+  package:
+    uses: ./.github/workflows/service-release-package.yml
+    with:
+      manifest-directory: scripts/service-release/fixture
+  round-trip:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.package.outputs.artifact-id }}
+          merge-multiple: true
+      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1
+        with:
+          version: 1.4.0
+      - name: Read the package by digest
+        env:
+          EXPECTED: ${{ needs.package.outputs.package-digest }}
+        run: |
+          test "$(oras resolve --oci-layout oci-layout.tar:release)" = "$EXPECTED"
+          oras manifest fetch --oci-layout "oci-layout.tar@$EXPECTED" > manifest.json
+          layer=$(jq -er '.layers | select(length == 1) | .[0].digest' manifest.json)
+          oras blob fetch --oci-layout "oci-layout.tar@$layer" --output layer.tar.gz
+          tar -xzOf layer.tar.gz example.yaml | grep -Fx '  name: packaging-example'
