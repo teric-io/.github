@@ -24,7 +24,7 @@ jobs:
       - run: python3 -m unittest discover -s scripts/service-release
   cut-interface:
     # Let GitHub validate the caller signature without requesting an environment or using a credential.
-    if: ${{ false }}
+    if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/service-release-cut.yml
     permissions:
       contents: read
