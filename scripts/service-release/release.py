@@ -83,6 +83,26 @@ def cut_metadata():
     return metadata
 
 
+def verify_run_artifacts():
+    repo, run, commit = (os.environ[k] for k in ("GITHUB_REPOSITORY", "GITHUB_RUN_ID", "GITHUB_SHA"))
+    for kind, variable in (("proof", "EVIDENCE_ARTIFACT_ID"), ("package", "PACKAGE_ARTIFACT_ID")):
+        artifact_id = os.environ[variable]
+        require(re.fullmatch(r"[1-9][0-9]*", artifact_id), "Expected an immutable artifact ID")
+        artifact = api(f"repos/{repo}/actions/artifacts/{artifact_id}")
+        origin = artifact["workflow_run"]
+        require(str(artifact["id"]) == artifact_id and artifact["expired"] is False
+                and str(origin["id"]) == run and origin["head_sha"] == commit
+                and origin["head_repository_id"] == origin["repository_id"] == int(os.environ["GITHUB_REPOSITORY_ID"]),
+                "Artifact belongs to a different repository, run or revision, or has expired")
+        if kind == "proof":
+            require(artifact["name"] == "service-release-proof-" + run, "Unexpected proof producer artifact")
+        else:
+            expected = rf"service-package-{run}-([1-9][0-9]*)-{commit}-[a-f0-9-]{{36}}"
+            name = re.fullmatch(expected, artifact["name"])
+            require(name and int(name[1]) <= int(os.environ["GITHUB_RUN_ATTEMPT"]),
+                    "Unexpected package producer artifact")
+
+
 def verify_cut_inputs(evidence, layout):
     metadata = cut_metadata()
     workflow = os.environ["TRUSTED_CUT_WORKFLOW"]
@@ -91,7 +111,7 @@ def verify_cut_inputs(evidence, layout):
             and workflow.endswith("@refs/heads/main"), "Unapproved caller workflow")
     receipt = json.loads((evidence / "registry-proof.json").read_bytes())
     expected = {**metadata, "workflow": workflow, "run_id": os.environ["GITHUB_RUN_ID"],
-                "provenance_verified": True}
+                "package_artifact_id": os.environ["PACKAGE_ARTIFACT_ID"], "provenance_verified": True}
     require(all(receipt.get(key) == value for key, value in expected.items()), "Registry proof does not match cut")
     attempt = receipt.get("run_attempt")
     require(isinstance(attempt, str) and attempt.isdecimal()
@@ -202,6 +222,9 @@ def candidate():
 if __name__ == "__main__":
     import sys
 
+    if sys.argv[1] == "artifacts":
+        verify_run_artifacts()
+        sys.exit(0)
     if sys.argv[1] == "prepare":
         verify_cut_inputs(Path("evidence"), Path("package/oci-layout.tar"))
         sys.exit(0)

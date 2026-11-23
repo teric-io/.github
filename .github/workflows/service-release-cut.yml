@@ -23,6 +23,10 @@ on:
         required: true
         type: string
         description: Artifact ID from this run containing the service contract, SBOM and registry/provenance evidence.
+    secrets:
+      RELEASE_APP_PRIVATE_KEY:
+        required: true
+        description: Release App key supplied by name from the protected cut environment.
     outputs:
       release-id:
         value: ${{ jobs.cut.outputs.release-id }}
@@ -57,17 +61,12 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: tooling
           persist-credentials: false
-      - name: Bind the proof artifact to the protected run
+      - name: Bind both artifacts to the protected run
         env:
-          ARTIFACT_ID: ${{ inputs.evidence-artifact-id }}
-          PACKAGE_ID: ${{ inputs.package-artifact-id }}
+          EVIDENCE_ARTIFACT_ID: ${{ inputs.evidence-artifact-id }}
+          PACKAGE_ARTIFACT_ID: ${{ inputs.package-artifact-id }}
           GH_TOKEN: ${{ github.token }}
-        run: |
-          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ && "$PACKAGE_ID" =~ ^[1-9][0-9]*$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" |
-            jq -e --arg name "service-release-proof-$GITHUB_RUN_ID" --arg sha "$GITHUB_SHA" --arg run "$GITHUB_RUN_ID" '
-              (.expired == false) and (.name == $name) and (.workflow_run.head_sha == $sha) and
-              ((.workflow_run.id | tostring) == $run)' >/dev/null
+        run: python3 -I tooling/scripts/service-release/release.py artifacts
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           artifact-ids: ${{ inputs.evidence-artifact-id }}
@@ -80,6 +79,7 @@ jobs:
           merge-multiple: true
       - name: Bind draft assets to package and registry evidence
         env:
+          PACKAGE_ARTIFACT_ID: ${{ inputs.package-artifact-id }}
           TRUSTED_CUT_WORKFLOW: ${{ vars.RELEASE_CUT_WORKFLOW_REF }}
           APPROVED_IMAGE_REPOSITORY: ${{ vars.RELEASE_IMAGE_REPOSITORY }}
           APPROVED_PACKAGE_REPOSITORY: ${{ vars.RELEASE_PACKAGE_REPOSITORY }}

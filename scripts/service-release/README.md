@@ -25,7 +25,27 @@ test "$(oras resolve "$REGISTRY_REPOSITORY:$VERSION")" = "$PACKAGE_DIGEST"
 
 ## Cut a draft
 
-Call `service-release-cut.yml` from a manual dispatch on protected `main`. Place it after the service has verified the image and package in its registry and run its release preview. The called workflow uses the caller environment `service-release-cut`. Restrict that environment to protected `main` and approved release operators. Configure the repository-scoped GitHub App installation there with variable `RELEASE_APP_ID` and environment secret `RELEASE_APP_PRIVATE_KEY`. Grant that installation Contents write on the service repository. Restrict who can modify release workflows and environment settings. In that environment set `RELEASE_CUT_WORKFLOW_REF` to the approved caller (for example `owner/repo/.github/workflows/cut.yml@refs/heads/main`). Set `RELEASE_IMAGE_REPOSITORY` and `RELEASE_PACKAGE_REPOSITORY` to the full approved registry repository names, without tags or digests. The caller grants its ambient token Actions read and Contents read.
+Call `service-release-cut.yml` from a manual dispatch on protected `main`. Place it after the service has verified the image and package in its registry and run its release preview. The called workflow uses the caller environment `service-release-cut`. Restrict that environment to protected `main` and approved release operators. Configure the repository-scoped GitHub App installation there with variable `RELEASE_APP_ID` and environment secret `RELEASE_APP_PRIVATE_KEY`. Grant that installation Contents write on the service repository. Restrict who can modify release workflows and environment settings. In that environment set `RELEASE_CUT_WORKFLOW_REF` to the approved caller (for example `owner/repo/.github/workflows/cut.yml@refs/heads/main`). Set `RELEASE_IMAGE_REPOSITORY` and `RELEASE_PACKAGE_REPOSITORY` to the full approved registry repository names, without tags or digests. The caller grants its ambient token Actions read and Contents read. Pass only the named environment secret from the caller's reusable-workflow job:
+
+```yaml
+jobs:
+  cut:
+    needs: [package, verify-publication]
+    uses: teric-io/.github/.github/workflows/service-release-cut.yml@<reviewed-commit-sha>
+    permissions:
+      contents: read
+      actions: read
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+    with:
+      version: ${{ inputs.version }}
+      package-artifact-id: ${{ needs.package.outputs.artifact-id }}
+      evidence-artifact-id: ${{ needs.verify-publication.outputs.artifact-id }}
+      package-reference: ${{ needs.verify-publication.outputs.package-reference }}
+      image-reference: ${{ needs.verify-publication.outputs.image-reference }}
+```
+
+Keep that key solely in the protected environment. The called job selects the environment. GitHub requires the caller to pass the name even when only the environment contains its value. [GitHub reusable workflow secret rules](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#using-inputs-and-secrets-in-a-reusable-workflow)
 
 | Input | Contents |
 | --- | --- |
@@ -37,7 +57,7 @@ Call `service-release-cut.yml` from a manual dispatch on protected `main`. Place
 The service-owned verification job reads each manifest back from the authorized registry by digest. Save the exact returned bytes (including the absence of a trailing newline) as `image-oci.json` and `package-oci.json`. Verify the build provenance for those references using the service's approved verifier. After that succeeds, generate `registry-proof.json` from the observed results. Include these fields:
 
 - `repository`, `version`, `commit`, `image` and `package` identify the caller, release version, source commit and verified registry references.
-- `workflow`, `run_id` and `run_attempt` are the GitHub workflow ref, run ID and attempt, all strings.
+- `workflow`, `run_id`, `run_attempt`, and `package_artifact_id` are the GitHub workflow ref, run ID, attempt, and immutable package artifact ID, all strings.
 - `provenance_verified` is Boolean true and `provenance_ref` identifies the immutable evidence the verifier accepted.
 
 In the same artifact, include `release-manifest.json` with `provides`, `requires` and `schema`, plus an SPDX or CycloneDX `sbom.json`. Create the proof artifact only in the reviewed publisher/verifier job. Use its upload action's returned ID directly as the cut input. Do not accept operator-supplied receipt bytes. The reusable workflow checks the run, source, evidence and package blobs before obtaining the App token. Each adopter must demonstrate the protected caller, least-privilege App installation, registry readback and provenance verifier with its owners.

@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   unit:
@@ -21,6 +22,21 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -m unittest discover -s scripts/service-release
+  cut-interface:
+    # Let GitHub validate the caller signature without requesting an environment or using a credential.
+    if: ${{ false }}
+    uses: ./.github/workflows/service-release-cut.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      version: v1.0.0
+      package-reference: unused
+      image-reference: unused
+      package-artifact-id: '1'
+      evidence-artifact-id: '2'
+    secrets:
+      RELEASE_APP_PRIVATE_KEY: unused-contract-fixture
   package:
     uses: ./.github/workflows/service-release-package.yml
     with:

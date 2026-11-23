@@ -117,6 +117,22 @@ class ReleaseTest(unittest.TestCase):
             with patch.dict(self.published, {"assets": self.assets(self.files)}), self.assertRaises(ValueError):
                 self.candidate()
 
+    def test_verify_both_run_artifacts(self):
+        env = {"GITHUB_RUN_ID": "10", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": COMMIT, "GITHUB_REPOSITORY_ID": "30",
+               "GITHUB_REPOSITORY": "owner/repo", "EVIDENCE_ARTIFACT_ID": "6", "PACKAGE_ARTIFACT_ID": "7"}
+        origin = {"id": 10, "head_sha": COMMIT, "repository_id": 30, "head_repository_id": 30}
+        proof = {"id": 6, "expired": False, "workflow_run": origin, "name": "service-release-proof-10"}
+        package_info = dict(proof, id=7, name=f"service-package-10-1-{COMMIT}-12345678-1234-1234-1234-1234567890ab")
+        with patch.dict(os.environ, env):
+            with patch.object(release, "api", side_effect=[proof, package_info]):
+                release.verify_run_artifacts()
+            for change in ({"expired": True}, {"id": 8}, {"name": "other-producer"},
+                           {"workflow_run": dict(origin, id=11)}, {"workflow_run": dict(origin, head_sha="0"*40)},
+                           {"workflow_run": dict(origin, head_repository_id=31)}):
+                with self.subTest(change=change), patch.object(release, "api", side_effect=[proof, package_info | change]):
+                    with self.assertRaises(ValueError):
+                        release.verify_run_artifacts()
+
     def test_prepare_binds_registry_and_package(self):
         repo = "registry.example/team/unit"
         manifests = self.root / "yaml"
@@ -132,10 +148,10 @@ class ReleaseTest(unittest.TestCase):
         workflow = "owner/repo/.github/workflows/cut.yml@refs/heads/main"
         metadata = dict(self.metadata, package=repo + "@" + digest,
                         image=repo + "@sha256:" + hashlib.sha256(image).hexdigest())
-        receipt = dict(metadata, workflow=workflow, run_id="123", run_attempt="1", provenance_verified=True, provenance_ref="signed-build-1")
+        receipt = dict(metadata, workflow=workflow, run_id="123", run_attempt="1", package_artifact_id="22", provenance_verified=True, provenance_ref="signed-build-1")
         (self.source / "registry-proof.json").write_text(json.dumps(receipt))
         env = self.cut_env(metadata) | {"GITHUB_WORKFLOW_REF": workflow, "TRUSTED_CUT_WORKFLOW": workflow,
-                                        "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+                                        "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "PACKAGE_ARTIFACT_ID": "22",
                                         "APPROVED_IMAGE_REPOSITORY": repo, "APPROVED_PACKAGE_REPOSITORY": repo}
         with patch.dict(os.environ, env):
             with patch.dict(os.environ, {"GITHUB_REF_PROTECTED": "false"}), self.assertRaises(ValueError):
