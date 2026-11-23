@@ -7,8 +7,11 @@ import tarfile
 from pathlib import Path
 
 
+ARTIFACT_TYPE = "application/vnd.teric.kubernetes.manifests.v1"
+
+
 def encode(value):
-    return json.dumps(value, separators=(",", ":"), sort_keys=True).encode()
+    return json.dumps(value, separators=(",", ":")).encode()
 
 
 def add_file(archive, name, data):
@@ -43,9 +46,11 @@ def build(checkout, directory, revision, output):
             zipped.write(buffer.getvalue())
         layer = blob("application/vnd.oci.image.layer.v1.tar+gzip", compressed.getvalue())
         media_type = "application/vnd.oci.image.manifest.v1+json"
-        manifest = {"schemaVersion": 2, "mediaType": media_type, "config": config,
+        manifest = {"schemaVersion": 2, "mediaType": media_type, "artifactType": ARTIFACT_TYPE,
+                    "config": config,
                     "layers": [layer], "annotations": {"org.opencontainers.image.revision": revision}}
         descriptor = blob(media_type, encode(manifest))
+        descriptor["artifactType"] = ARTIFACT_TYPE
         descriptor["annotations"] = {"org.opencontainers.image.ref.name": "release"}
         add_file(archive, "oci-layout", encode({"imageLayoutVersion": "1.0.0"}))
         add_file(archive, "index.json", encode({"schemaVersion": 2, "manifests": [descriptor]}))

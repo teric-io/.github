@@ -14,7 +14,7 @@ jobs:
       manifest-directory: deploy/rendered
 ```
 
-Commit the final YAML in a flat directory in the service repository. Validate its objects and references in service CI. The workflow reads those files at the caller revision and uploads one Actions artifact containing `oci-layout.tar`. It exposes `artifact-id`, `artifact-name`, and `package-digest`. The digest identifies the OCI manifest with one gzip tar layer containing the YAML.
+Commit the final YAML in a flat directory in the service repository. Validate its objects and references in service CI. The workflow reads those files at the caller revision and uploads one Actions artifact containing `oci-layout.tar`. It exposes `artifact-id`, `artifact-name`, and `package-digest`. The digest identifies the exact OCI image manifest. Its `artifactType` is `application/vnd.teric.kubernetes.manifests.v1`, the Teric package format for rendered Kubernetes YAML. The config is the OCI empty JSON object and the single `application/vnd.oci.image.layer.v1.tar+gzip` layer contains the YAML files. Rebuilding a package made before the artifact type was added produces a new manifest digest. Verify and promote the digest returned by the current build. [OCI image manifest specification](https://github.com/opencontainers/image-spec/blob/v1.1.1/manifest.md#image-manifest-property-descriptions) · [Argo CD OCI artifact format](https://argo-cd.readthedocs.io/en/stable/user-guide/oci/#usage-guidelines)
 
 A registry publisher can download that artifact by ID in the same run. With an already authorized destination and identity, copy the layout and compare the remote manifest digest to the package output.
 

@@ -37,9 +37,17 @@ class PackageTest(unittest.TestCase):
                     return content
                 descriptor, = json.load(layout.extractfile("index.json"))["manifests"]
                 self.assertEqual(digest, descriptor["digest"])
-                manifest = json.loads(read_blob(descriptor))
+                manifest_bytes = read_blob(descriptor)
+                manifest = json.loads(manifest_bytes)
+                self.assertEqual(manifest["mediaType"], "application/vnd.oci.image.manifest.v1+json")
+                self.assertEqual(manifest["config"]["mediaType"], "application/vnd.oci.empty.v1+json")
+                self.assertEqual(read_blob(manifest["config"]), b"{}")
+                self.assertEqual(manifest["artifactType"], "application/vnd.teric.kubernetes.manifests.v1")
+                self.assertEqual(descriptor["artifactType"], manifest["artifactType"])
+                self.assertTrue(manifest_bytes.startswith(b'{"schemaVersion":2,'))
                 self.assertEqual(COMMIT, manifest["annotations"]["org.opencontainers.image.revision"])
                 layer, = manifest["layers"]
+                self.assertEqual(layer["mediaType"], "application/vnd.oci.image.layer.v1.tar+gzip")
                 with tarfile.open(fileobj=io.BytesIO(read_blob(layer)), mode="r:gz") as archive:
                     self.assertEqual(archive.getnames(), ["sample.yaml"])
                     self.assertEqual(archive.extractfile("sample.yaml").read(), data)
