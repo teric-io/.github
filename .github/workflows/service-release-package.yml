@@ -1,0 +1,62 @@
+name: Package service manifests
+
+on:
+  workflow_call:
+    inputs:
+      manifest-directory:
+        description: Directory of final, flat Kubernetes YAML in the caller repository.
+        required: true
+        type: string
+    outputs:
+      package-digest:
+        description: Digest of the OCI manifest.
+        value: ${{ jobs.package.outputs.digest }}
+      artifact-name:
+        description: Name of the Actions artifact containing oci-layout.tar.
+        value: ${{ jobs.package.outputs.name }}
+      artifact-id:
+        description: Immutable ID of the Actions artifact.
+        value: ${{ jobs.package.outputs.id }}
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      name: ${{ steps.build.outputs.name }}
+      id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Require the shared workflow revision
+        env:
+          SHARED_REPOSITORY: ${{ job.workflow_repository }}
+          SHARED_REVISION: ${{ job.workflow_sha }}
+        run: |
+          test -n "$SHARED_REPOSITORY"
+          [[ "$SHARED_REVISION" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: caller
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+      - id: build
+        env:
+          MANIFEST_DIRECTORY: ${{ inputs.manifest-directory }}
+        run: |
+          python3 -I tooling/scripts/service-release/package.py
+          echo "name=service-package-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}-$(cat /proc/sys/kernel/random/uuid)" >> "$GITHUB_OUTPUT"
+      - id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.build.outputs.name }}
+          path: ${{ runner.temp }}/oci-layout.tar
+          if-no-files-found: error
+          compression-level: 0
