@@ -41,6 +41,19 @@ jobs:
     uses: ./.github/workflows/service-release-package.yml
     with:
       manifest-directory: scripts/service-release/fixture
+  publish-interface:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/service-release-publish.yml
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    with:
+      version: v1.0.0
+      package-reference: unused
+      image-reference: unused
+      package-artifact-id: '1'
+      evidence-artifact-id: '2'
   round-trip:
     needs: package
     runs-on: ubuntu-latest

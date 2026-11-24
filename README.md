@@ -12,6 +12,7 @@ Located in `.github/workflows/`:
 |----------|---------|-------|
 | `service-release-package.yml` | Build a digest-addressed OCI package from Kubernetes YAML | [Service release workflows](scripts/service-release/README.md) |
 | `service-release-cut.yml` | Create a draft with immutable source and artifact references | [Release cut](scripts/service-release/README.md#cut-a-draft) |
+| `service-release-publish.yml` | Publish the stable release requested by an approved trigger App | [Delegated publication](scripts/service-release/README.md#publish-a-delegated-release) |
 | `service-release-candidate.yml` | Verify the identity and source of a published stable release | [Release verification](scripts/service-release/README.md#verify-a-published-candidate) |
 | `infra-references-sync.yml` | Retired compatibility shim for old PROC-007 callers | Existing `uses: teric-io/.github/.github/workflows/infra-references-sync.yml@main` calls succeed without syncing |
 | `infra-references-reconcile.yml` | Retired manual-only compatibility shim | No scheduled reconciliation |
