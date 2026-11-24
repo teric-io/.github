@@ -94,6 +94,39 @@ class ReleaseTest(unittest.TestCase):
     def test_candidate(self):
         self.assertEqual(self.candidate()["package-reference"], REFERENCE)
 
+    def test_contract_evidence(self):
+        fc = {"unit": "mcp-fast-classifier",
+              "provides": [{"contract": "mcp-fast-classifier", "serves": "1.0.0"}],
+              "requires": [], "schema": {}}
+        stateful = {"provides": [{"contract": "dispatch-runtime", "serves": ">=1.3 <2.0"}],
+                    "requires": [{"contract": "nats-topology/agent-dispatch", "range": ">=7"}],
+                    "schema": {"head": "0023_runtime_binding", "oldest_binary": "v1.4.0"}}
+        for contract in (fc, stateful):
+            files = self.files | {"release-manifest.json": json.dumps(contract).encode()}
+            release.validate_evidence(files, self.metadata)
+
+        for change in ({"provides": None}, {"requires": {}}, {"provides": [False]},
+                       {"provides": [{"contract": "fc", "serves": "  "}]},
+                       {"requires": [{"contract": "", "range": ">=1"}]},
+                       {"requires": [{"contract": "fc", "serves": "1.0.0"}]},
+                       {"schema": []}, {"schema": {"head": "0023"}},
+                       {"schema": {"head": None, "oldest_binary": "v1.4.0"}},
+                       {"schema": {"head": "0023", "oldest_binary": "main"}}):
+            files = self.files | {"release-manifest.json": json.dumps(fc | change).encode()}
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                release.validate_evidence(files, self.metadata)
+
+    def test_malformed_contract_at_cut_and_candidate(self):
+        raw = b'{"provides":[],"requires":false,"schema":{}}'
+        (self.source / "release-manifest.json").write_bytes(raw)
+        with self.assertRaisesRegex(ValueError, "requires"):
+            release.release_assets(self.source, self.root / "invalid-assets", self.metadata)
+        self.files["release-manifest.json"] = raw
+        self.files["SHA256SUMS"] = release.checksum_file(self.files)
+        self.published["assets"] = self.assets(self.files)
+        with self.assertRaisesRegex(ValueError, "requires"):
+            self.candidate()
+
     def test_rejected_release(self):
         for field, value in (("immutable", False), ("draft", True), ("prerelease", True)):
             with self.subTest(field=field), patch.dict(self.published, {field: value}), self.assertRaises(ValueError):
