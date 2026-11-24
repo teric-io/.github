@@ -40,9 +40,29 @@ def checksum_file(files):
                    if name != "SHA256SUMS").encode()
 
 
+def validate_contract(contract):
+    require(isinstance(contract, dict), "Expected a release contract object")
+    for section, version_field in (("provides", "serves"), ("requires", "range")):
+        entries = contract.get(section)
+        require(isinstance(entries, list), f"{section} must be an array")
+        for index, entry in enumerate(entries):
+            require(isinstance(entry, dict), f"{section}[{index}] must be an object")
+            for field in ("contract", version_field):
+                value = entry.get(field)
+                require(isinstance(value, str) and value.strip(), f"{section}[{index}].{field} must be a nonempty string")
+
+    schema = contract.get("schema")
+    require(isinstance(schema, dict), "schema must be an object")
+    if schema:
+        head = schema.get("head")
+        oldest = schema.get("oldest_binary")
+        require(isinstance(head, str) and head.strip(), "schema.head must name the schema revision")
+        require(isinstance(oldest, str) and VERSION.fullmatch(oldest),
+                "schema.oldest_binary must name a stable release version")
+
+
 def validate_evidence(files, metadata):
-    contract = json.loads(files["release-manifest.json"])
-    require(all(key in contract for key in ("provides", "requires", "schema")), "Missing release contract fields")
+    validate_contract(json.loads(files["release-manifest.json"]))
     sbom = json.loads(files["sbom.json"])
     require(sbom.get("spdxVersion") or sbom.get("bomFormat") == "CycloneDX", "Expected SPDX or CycloneDX JSON")
     receipt = json.loads(files["registry-proof.json"])
