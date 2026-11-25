@@ -33,7 +33,36 @@ permissions:
   actions: read
   id-token: write
 
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+  IMAGE_REFERENCE: ${{ inputs.image-reference }}
+  PACKAGE_REFERENCE: ${{ inputs.package-reference }}
+  PACKAGE_ARTIFACT_ID: ${{ inputs.package-artifact-id }}
+  EVIDENCE_ARTIFACT_ID: ${{ inputs.evidence-artifact-id }}
+
 jobs:
+  interface:
+    if: github.repository == 'teric-io/.github' && (github.event_name == 'pull_request' || github.event_name == 'push')
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Verify caller inputs and publisher event guard
+        run: |
+          test "$RELEASE_VERSION" = v1.0.0
+          test "$IMAGE_REFERENCE" = 'registry.example/fc@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+          test "$PACKAGE_REFERENCE" = 'registry.example/manifests@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+          test "$PACKAGE_ARTIFACT_ID" = 17
+          test "$EVIDENCE_ARTIFACT_ID" = 29
+          if python3 -I scripts/service-release/publisher.py authorize 2>"$RUNNER_TEMP/publisher-denial"; then
+            exit 1
+          fi
+          grep -Fx 'ValueError: Cut requires a dispatch on protected main' "$RUNNER_TEMP/publisher-denial"
+      - run: python3 -m unittest discover -s scripts/service-release -v
   cut:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.ref_protected
     environment: service-release-cut
@@ -43,10 +72,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      RELEASE_VERSION: ${{ inputs.version }}
-      IMAGE_REFERENCE: ${{ inputs.image-reference }}
-      PACKAGE_REFERENCE: ${{ inputs.package-reference }}
-      PACKAGE_ARTIFACT_ID: ${{ inputs.package-artifact-id }}
       TRUSTED_CUT_WORKFLOW: ${{ vars.RELEASE_CUT_WORKFLOW_REF }}
       RELEASE_HANDOFF_ENABLED: ${{ vars.RELEASE_HANDOFF_ENABLED }}
       RELEASE_TRIGGER_ACTOR_ID: ${{ vars.RELEASE_TRIGGER_ACTOR_ID }}
@@ -69,8 +94,6 @@ jobs:
           persist-credentials: false
       - name: Bind both artifacts to the protected run
         env:
-          EVIDENCE_ARTIFACT_ID: ${{ inputs.evidence-artifact-id }}
-          PACKAGE_ARTIFACT_ID: ${{ inputs.package-artifact-id }}
           GH_TOKEN: ${{ github.token }}
         run: python3 -I tooling/scripts/service-release/release.py artifacts
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

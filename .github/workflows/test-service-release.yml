@@ -15,13 +15,6 @@ permissions:
   actions: read
 
 jobs:
-  unit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - run: python3 -m unittest discover -s scripts/service-release
   cut-interface:
     # Let GitHub validate the caller signature without requesting an environment or using a credential.
     if: github.event_name == 'workflow_dispatch'
@@ -42,7 +35,6 @@ jobs:
     with:
       manifest-directory: scripts/service-release/fixture
   publish-interface:
-    if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/service-release-publish.yml
     permissions:
       contents: read
@@ -50,10 +42,10 @@ jobs:
       id-token: write
     with:
       version: v1.0.0
-      package-reference: unused
-      image-reference: unused
-      package-artifact-id: '1'
-      evidence-artifact-id: '2'
+      image-reference: registry.example/fc@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+      package-reference: registry.example/manifests@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+      package-artifact-id: '17'
+      evidence-artifact-id: '29'
   round-trip:
     needs: package
     runs-on: ubuntu-latest
