@@ -169,7 +169,7 @@ def verify_cut_inputs(evidence, layout):
     release_assets(evidence, assets, metadata)
 
 
-def draft():
+def draft(expected_author=None):
     metadata = cut_metadata()
     repository, tag, commit = (metadata[key] for key in ("repository", "version", "commit"))
     assets = Path(os.environ["RUNNER_TEMP"]) / "service-release-assets"
@@ -180,7 +180,13 @@ def draft():
     require(len(matches) <= 1, "Multiple releases for this version")
     if matches:
         release = matches[0]
-        require(release["draft"] and release["target_commitish"] == commit, "Version already in use")
+        if expected_author is not None:
+            require(release["author"]["id"] == expected_author and release["prerelease"] is False,
+                    "Version reserved by a different publisher or for a prerelease")
+        require(release["target_commitish"] == commit and (release["draft"] or expected_author is not None),
+                "Version already in use")
+        if not release["draft"]:
+            return {"release-id": release["id"]}
     else:
         # Reserve a new version only. The App creates its tag at publication.
         refs = api(f"repos/{repository}/git/matching-refs/tags/{tag}")
@@ -189,6 +195,8 @@ def draft():
                                 "-f", f"tag_name={tag}", "-f", f"target_commitish={commit}",
                                 "-f", f"name={tag}", "-F", "draft=true", "-F", "prerelease=false"))
     release_id = release["id"]
+    if expected_author is not None:
+        require(release["author"]["id"] == expected_author, "Unexpected draft author")
     existing = {a["name"]: a for a in api(f"repos/{repository}/releases/{release_id}/assets?per_page=100")}
     require(existing.keys() <= files.keys(), "Draft contains unexpected assets")
     for name, data in files.items():
