@@ -1,0 +1,106 @@
+name: Tag a verified service release candidate
+
+on:
+  workflow_call:
+    inputs:
+      check-workflow:
+        required: true
+        type: string
+        description: Protected main CI workflow filename.
+      initial-version:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+        description: Stable version in vMAJOR.MINOR.PATCH form.
+      image-reference:
+        required: true
+        type: string
+        description: Verified registry image reference pinned by SHA-256.
+      package-reference:
+        required: true
+        type: string
+        description: Verified registry manifest package reference pinned by SHA-256.
+      package-artifact-id:
+        required: true
+        type: string
+        description: ID of the package workflow artifact from this run.
+      evidence-artifact-id:
+        required: true
+        type: string
+        description: Artifact ID from this run containing the service contract, SBOM and registry/provenance evidence.
+    outputs:
+      candidate-tag:
+        value: ${{ jobs.tag.outputs.tag }}
+        description: Immutable annotated candidate tag.
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  id-token: write
+
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+  IMAGE_REFERENCE: ${{ inputs.image-reference }}
+  PACKAGE_REFERENCE: ${{ inputs.package-reference }}
+  PACKAGE_ARTIFACT_ID: ${{ inputs.package-artifact-id }}
+  EVIDENCE_ARTIFACT_ID: ${{ inputs.evidence-artifact-id }}
+
+  RELEASE_CHECK_WORKFLOW: ${{ inputs.check-workflow }}
+  INITIAL_RELEASE_VERSION: ${{ inputs.initial-version }}
+  TRUSTED_CUT_WORKFLOW: ${{ vars.RELEASE_CUT_WORKFLOW_REF }}
+  CANDIDATE_ENABLED: ${{ vars.RELEASE_CANDIDATE_TAG_ENABLED }}
+  APPROVED_IMAGE_REPOSITORY: ${{ vars.RELEASE_IMAGE_REPOSITORY }}
+  APPROVED_PACKAGE_REPOSITORY: ${{ vars.RELEASE_PACKAGE_REPOSITORY }}
+
+jobs:
+  tag:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.ref_protected
+    environment: service-release-candidate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.issue.outputs.tag }}
+    steps:
+      - name: Require the reviewed shared workflow
+        env:
+          SHARED_REPOSITORY: ${{ job.workflow_repository }}
+          SHARED_REVISION: ${{ job.workflow_sha }}
+        run: |
+          test "$SHARED_REPOSITORY" = teric-io/.github
+          [[ "$SHARED_REVISION" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ inputs.evidence-artifact-id }}
+          path: evidence
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ inputs.package-artifact-id }}
+          path: package
+          merge-multiple: true
+      - name: Verify semantic version and both artifacts before signer access
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I tooling/scripts/service-release/semantic_candidate.py verify
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ vars.RELEASE_PUBLISHER_ROLE_ARN }}
+          aws-region: ${{ vars.RELEASE_PUBLISHER_REGION }}
+          role-duration-seconds: 900
+      - id: issue
+        name: Create the candidate ref and verify its annotation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_APP_ID: ${{ vars.RELEASE_APP_ID }}
+          RELEASE_INSTALLATION_ID: ${{ vars.RELEASE_INSTALLATION_ID }}
+          PUBLISHER_SECRET_ARN: ${{ vars.RELEASE_PUBLISHER_SECRET_ARN }}
+        run: python3 -I tooling/scripts/service-release/semantic_candidate.py tag

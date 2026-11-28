@@ -90,3 +90,17 @@ The publisher requests a short-lived installation token for the one service, che
 Call `service-release-candidate.yml` from `on: { release: { types: [published] } }`. Set the service repository variable `RELEASE_APP_BOT_ID` to the numeric user ID of the release App's bot account. This differs from the App ID. The workflow reads the event and immutable release from GitHub. It checks the publisher, original stable publication, version tag, ancestry on `main`, and the exact release asset set, and each asset digest against the release checksum inventory.
 
 On success it returns `release-id`, `version`, `source-sha`, `image-reference`, and `package-reference`. A failed check stops the job. The caller can record a held-release reason on failure. Before writing desired state, its authorized promotion operation must still evaluate live dependency compatibility, schema rollback compatibility, the allowed resources, and build and registry provenance; verify the current channel generation; and bind its decision to these exact digests. Only the service's admitted writer can update that record. Verification and packaging run with read-only repository access.
+
+## Assign an immutable build candidate
+
+An adopting service calls the read-only `.github/actions/service-release-version` action before it compiles release evidence. The first line of the PR description, or the PR title, supplies the Angular header. Preserve its change type and breaking status in the protected squash commit. A breaking footer starts on its own line with `BREAKING CHANGE: ` followed by a description. A scope is optional.
+
+| Reviewed PR description | Next stable version after v1.9.10 |
+| --- | --- |
+| `feat(api)!: remove the legacy request` or a breaking footer | v2.0.0 |
+| `feat(api): add batch requests` | v1.10.0 |
+| `fix(api): reject an empty input` | v1.9.11 |
+
+The largest change across all unreleased squash merges determines the version. Maintenance types such as `perf`, `docs`, `ci`, and `test` count as patches. A malformed description or a classification that differs from the protected commit stops the build. Before the first stable tag the service supplies its initial release version. Each new Actions run gets its own `vMAJOR.MINOR.PATCH-rc.PR.RUN_ID` tag.
+
+Call `service-release-tag.yml` with the same initial version, the computed stable version, the protected CI workflow filename and both verified artifact IDs and digest references. Pin both shared entry points to the same reviewed revision. Set the approved package caller in `RELEASE_CUT_WORKFLOW_REF`. The tag step requires the `service-release-candidate-tag` environment, its exact OIDC workflow pin, the repository-scoped publisher and `RELEASE_CANDIDATE_TAG_ENABLED=true`. The tag annotation records the merged commit, PR, image source, artifact digests and IDs, CI attempt and provenance. An identical retry reads back the tag. A conflicting record stops. The separate delegated publisher owns stable publication.
