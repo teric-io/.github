@@ -1,0 +1,22 @@
+name: Assign a semantic candidate version
+description: Resolve the protected merge and its Angular PR description using read-only GitHub access.
+inputs:
+  initial-version:
+    description: Stable version planned for the first release.
+    required: true
+outputs:
+  version:
+    description: Stable version proposed for these verified artifacts.
+    value: ${{ steps.version.outputs.version }}
+  tag:
+    description: Immutable candidate tag reserved for this build.
+    value: ${{ steps.version.outputs.tag }}
+runs:
+  using: composite
+  steps:
+    - id: version
+      shell: bash
+      env:
+        INITIAL_RELEASE_VERSION: ${{ inputs.initial-version }}
+        GH_TOKEN: ${{ github.token }}
+      run: python3 -I "$GITHUB_ACTION_PATH/../../../scripts/service-release/semantic_candidate.py" version

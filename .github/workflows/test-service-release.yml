@@ -4,11 +4,13 @@ on:
     paths:
       - '.github/workflows/*service-release*.yml'
       - 'scripts/service-release/**'
+      - '.github/actions/service-release-version/**'
   push:
     branches: [main]
     paths:
       - '.github/workflows/*service-release*.yml'
       - 'scripts/service-release/**'
+      - '.github/actions/service-release-version/**'
 
 permissions:
   contents: read
